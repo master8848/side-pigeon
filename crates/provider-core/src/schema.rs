@@ -104,6 +104,12 @@ pub struct SendMessage {
     pub attachments: Vec<MediaAttachment>,
 }
 
+impl Default for SendMessage {
+    fn default() -> Self {
+        Self { channel_id: String::new(), text: String::new(), reply_to: None, attachments: Vec::new() }
+    }
+}
+
 /// A normalized send confirmation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SendReceipt {
