@@ -1,0 +1,13 @@
+[package]
+name = "provider-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JSON-RPC 2.0 transports: stdio (primary), WebSocket and HTTP (feature-gated)"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

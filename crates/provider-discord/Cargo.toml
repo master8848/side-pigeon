@@ -1,0 +1,15 @@
+[package]
+name = "provider-discord"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Discord Gateway v10 provider: hand-rolled WS gateway + REST send"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
