@@ -5,8 +5,17 @@ edition.workspace = true
 license.workspace = true
 description = "Unified schema, capability traits, error types (ported from ZeroClaw, MIT/Apache-2.0)"
 
+[features]
+default = ["registry"]
+# The feature-gated provider registry. Disable for a lean embed that only
+# needs schema + traits (e.g. provider crates themselves).
+registry = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
