@@ -9,14 +9,25 @@ description = "provider-connect sidecar binary: JSON-RPC 2.0 over stdio"
 name = "pc"
 path = "src/main.rs"
 
+[features]
+# Built-in echo provider for local testing / demos (no network needed).
+default = ["demo"]
+demo = []
+# Real providers are compile-time feature-gated (compile-time pruning, per
+# docs/architecture.md §7.1.5). Wire a provider by enabling its feature AND
+# listing it in the config's "providers" array.
+telegram = ["dep:provider-telegram"]
+discord = ["dep:provider-discord"]
+
 [dependencies]
 provider-core = { path = "../../crates/provider-core" }
 provider-transport = { path = "../../crates/provider-transport" }
-provider-telegram = { path = "../../crates/provider-telegram" }
-provider-discord = { path = "../../crates/provider-discord" }
+provider-telegram = { path = "../../crates/provider-telegram", optional = true }
+provider-discord = { path = "../../crates/provider-discord", optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
