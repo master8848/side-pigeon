@@ -192,7 +192,7 @@ pub fn parse_message_create(
         thread_ts: thread,
         attachments,
         explicitly_addressed: self_user_id
-            .map_or(false, |uid| m.mentions.iter().any(|u| u.id == uid)),
+            .is_some_and(|uid| m.mentions.iter().any(|u| u.id == uid)),
         ts,
         raw: Some(value.clone()),
     })
