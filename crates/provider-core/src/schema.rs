@@ -90,8 +90,9 @@ pub enum MediaKind {
     Sticker,
 }
 
-/// A normalized outbound message.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A normalized outbound message. Missing fields default (empty channel_id /
+/// text) when deserializing so hosts can send partial messages.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SendMessage {
     /// Chat/room id to deliver to.
@@ -102,12 +103,6 @@ pub struct SendMessage {
     pub reply_to: Option<String>,
     /// Attachments to send alongside the text.
     pub attachments: Vec<MediaAttachment>,
-}
-
-impl Default for SendMessage {
-    fn default() -> Self {
-        Self { channel_id: String::new(), text: String::new(), reply_to: None, attachments: Vec::new() }
-    }
 }
 
 /// A normalized send confirmation.
