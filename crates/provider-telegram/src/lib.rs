@@ -38,6 +38,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use provider_core::{
     ChannelMessage, ChatProvider, ContentPart, MediaAttachment, MediaKind, ProviderError,
     ProviderEvents, SendMessage, SendReceipt, Sender,
@@ -589,6 +590,7 @@ fn build_client(timeout: Duration) -> reqwest::Client {
         .expect("valid reqwest client")
 }
 
+#[async_trait]
 impl ChatProvider for TelegramProvider {
     fn id(&self) -> &'static str {
         "telegram"
