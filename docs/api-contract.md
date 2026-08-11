@@ -21,10 +21,12 @@ pub struct Sender { pub id: String, pub name: Option<String>, pub username: Opti
 pub enum ContentPart { Text(String), Media(MediaAttachment) }
 pub struct MediaAttachment { pub kind: MediaKind, pub url: Option<String>, pub mime: Option<String>, pub data: Option<Vec<u8>>, pub caption: Option<String> }
 pub enum MediaKind { Image, Audio, Video, File, Sticker }
-pub struct SendMessage { pub channel_id: String, pub text: String, pub reply_to: Option<String>, pub attachments: Vec<MediaAttachment> }
+pub struct SendMessage { pub channel_id: String, pub text: String, pub reply_to: Option<String>, pub attachments: Vec<MediaAttachment> }  // NOTE: derives serde(default) so reply_to/attachments are optional on the wire
 pub struct SendReceipt { pub message_id: String, pub ts: i64 }
 
 // capabilities (split, NOT monolithic)
+// NOTE: implemented with #[async_trait] (providers are Box<dyn ChatProvider> in the registry); signatures otherwise identical.
+#[async_trait::async_trait]
 pub trait ChatProvider: Send + Sync {
     fn id(&self) -> &'static str;
     async fn start(&mut self) -> Result<(), ProviderError>;

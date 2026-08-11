@@ -92,6 +92,7 @@ pub enum MediaKind {
 
 /// A normalized outbound message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SendMessage {
     /// Chat/room id to deliver to.
     pub channel_id: String,
