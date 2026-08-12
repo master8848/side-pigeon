@@ -114,7 +114,8 @@ mod tests {
 
     #[test]
     fn identify_payload_has_op_intents_and_token() {
-        let p: serde_json::Value = serde_json::from_str(&identify_payload("tok", DEFAULT_INTENTS)).unwrap();
+        let p: serde_json::Value =
+            serde_json::from_str(&identify_payload("tok", DEFAULT_INTENTS)).unwrap();
         assert_eq!(p["op"], 2);
         assert_eq!(p["d"]["token"], "tok");
         assert_eq!(p["d"]["intents"], 37377);
@@ -124,7 +125,8 @@ mod tests {
 
     #[test]
     fn resume_payload_has_session_and_seq() {
-        let p: serde_json::Value = serde_json::from_str(&resume_payload("tok", "sess1", 42)).unwrap();
+        let p: serde_json::Value =
+            serde_json::from_str(&resume_payload("tok", "sess1", 42)).unwrap();
         assert_eq!(p["op"], 6);
         assert_eq!(p["d"]["session_id"], "sess1");
         assert_eq!(p["d"]["seq"], 42);

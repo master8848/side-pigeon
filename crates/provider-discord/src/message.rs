@@ -164,7 +164,10 @@ pub fn parse_message_create(
         });
     }
 
-    let thread = m.message_reference.as_ref().and_then(|r| r.message_id.clone());
+    let thread = m
+        .message_reference
+        .as_ref()
+        .and_then(|r| r.message_id.clone());
     let ts = snowflake_ts(&m.id)
         .or_else(|| m.timestamp.as_deref().and_then(iso_ts))
         .unwrap_or(0);
@@ -243,7 +246,9 @@ mod tests {
             Some("https://cdn.discordapp.com/avatars/551234567890123456/a_1234567890abcdef.gif")
         );
         assert_eq!(msg.content.len(), 1);
-        assert!(matches!(&msg.content[0], ContentPart::Text(t) if t == "hello from discord <@1001>"));
+        assert!(
+            matches!(&msg.content[0], ContentPart::Text(t) if t == "hello from discord <@1001>")
+        );
         assert_eq!(
             msg.reply_target.as_deref(),
             Some("1107462566582882300"),
@@ -288,7 +293,13 @@ mod tests {
     #[test]
     fn snowflake_and_iso_timestamps() {
         assert_eq!(snowflake_ts("175928847299117063"), Some(1_462_015_105_796));
-        assert_eq!(iso_ts("2015-01-01T00:00:00.000000+00:00"), Some(1_420_070_400_000));
-        assert_eq!(iso_ts("2024-01-15T20:30:45.123000+00:00"), Some(1_705_350_645_000));
+        assert_eq!(
+            iso_ts("2015-01-01T00:00:00.000000+00:00"),
+            Some(1_420_070_400_000)
+        );
+        assert_eq!(
+            iso_ts("2024-01-15T20:30:45.123000+00:00"),
+            Some(1_705_350_645_000)
+        );
     }
 }

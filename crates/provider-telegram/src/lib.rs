@@ -410,18 +410,19 @@ impl TelegramProvider {
                 after: None,
             })?;
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| PollFailure::Retry {
-                error: ProviderError::Network(e.to_string()),
-                after: None,
-            })?;
+        let text = resp.text().await.map_err(|e| PollFailure::Retry {
+            error: ProviderError::Network(e.to_string()),
+            after: None,
+        })?;
 
         // HTTP-level error mapping: 401 auth, 409 conflicting long-poll, 429 rate limit.
         match status.as_u16() {
             401 => return Err(PollFailure::Fatal(ProviderError::Auth(error_body(&text).1))),
-            409 => return Err(PollFailure::Fatal(ProviderError::Protocol(error_body(&text).1))),
+            409 => {
+                return Err(PollFailure::Fatal(ProviderError::Protocol(
+                    error_body(&text).1,
+                )))
+            }
             429 => {
                 return Err(PollFailure::Retry {
                     error: ProviderError::RateLimit(error_body(&text).1),
@@ -437,10 +438,11 @@ impl TelegramProvider {
             _ => {}
         }
 
-        let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| PollFailure::Retry {
-            error: ProviderError::Protocol(format!("invalid telegram response: {e}")),
-            after: None,
-        })?;
+        let body: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| PollFailure::Retry {
+                error: ProviderError::Protocol(format!("invalid telegram response: {e}")),
+                after: None,
+            })?;
         if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
             let (code, desc) = error_body(&text);
             return match code {
@@ -494,9 +496,12 @@ impl TelegramProvider {
                 Err(PollFailure::Retry { error, after }) => {
                     *provider.last_error.lock().unwrap() = Some(error);
                     consecutive_errors += 1;
-                    let wait =
-                        after.unwrap_or_else(|| backoff(provider.poll_interval, consecutive_errors));
-                    debug!(wait_ms = wait.as_millis(), "telegram poll transient error; retrying");
+                    let wait = after
+                        .unwrap_or_else(|| backoff(provider.poll_interval, consecutive_errors));
+                    debug!(
+                        wait_ms = wait.as_millis(),
+                        "telegram poll transient error; retrying"
+                    );
                     tokio::time::sleep(wait).await;
                 }
                 Err(PollFailure::Fatal(error)) => {
@@ -558,7 +563,10 @@ impl TelegramProvider {
                 )));
             }
             s if s >= 400 => {
-                return Err(ProviderError::Protocol(format!("HTTP {s}: {}", error_body(&text).1)));
+                return Err(ProviderError::Protocol(format!(
+                    "HTTP {s}: {}",
+                    error_body(&text).1
+                )));
             }
             _ => {}
         }
@@ -747,7 +755,13 @@ mod tests {
         (format!("http://{addr}"), req_rx, task)
     }
 
-    fn provider_with(base: String) -> (mpsc::Sender<ChannelMessage>, mpsc::Receiver<ChannelMessage>, TelegramProvider) {
+    fn provider_with(
+        base: String,
+    ) -> (
+        mpsc::Sender<ChannelMessage>,
+        mpsc::Receiver<ChannelMessage>,
+        TelegramProvider,
+    ) {
         let (tx, rx) = mpsc::channel(8);
         let provider = TelegramProvider::new("TESTTOKEN", Arc::new(TestSink { tx: tx.clone() }))
             .with_base_url(base)

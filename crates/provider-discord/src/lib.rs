@@ -46,9 +46,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, Stream, StreamExt};
-use provider_core::{
-    ChatProvider, ProviderError, ProviderEvents, SendMessage, SendReceipt,
-};
+use provider_core::{ChatProvider, ProviderError, ProviderEvents, SendMessage, SendReceipt};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -191,7 +189,11 @@ impl DiscordProvider {
 
     /// Cached session id, if the gateway has reached READY.
     pub fn session_id(&self) -> Option<String> {
-        self.session.lock().unwrap().as_ref().map(|s| s.session_id.clone())
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.session_id.clone())
     }
 
     // ------------------------------------------------------------------
@@ -314,14 +316,21 @@ impl DiscordProvider {
         if let Some(s) = &session {
             trace!("gateway resuming session {}", s.session_id);
             if let Err(e) = sink
-                .send(WsMessage::Text(resume_payload(&provider.token, &s.session_id, s.seq)))
+                .send(WsMessage::Text(resume_payload(
+                    &provider.token,
+                    &s.session_id,
+                    s.seq,
+                )))
                 .await
             {
                 debug!(error = %e, "resume send failed");
                 return RunOutcome::Reconnect { healthy: false };
             }
         } else if let Err(e) = sink
-            .send(WsMessage::Text(identify_payload(&provider.token, provider.intents)))
+            .send(WsMessage::Text(identify_payload(
+                &provider.token,
+                provider.intents,
+            )))
             .await
         {
             debug!(error = %e, "identify send failed");
@@ -333,7 +342,10 @@ impl DiscordProvider {
             Some(h) => h,
             None => return RunOutcome::Reconnect { healthy: false },
         };
-        debug!(interval_ms = hello.heartbeat_interval, "gateway HELLO received");
+        debug!(
+            interval_ms = hello.heartbeat_interval,
+            "gateway HELLO received"
+        );
         let mut heartbeat = Heartbeat::new(Duration::from_millis(hello.heartbeat_interval));
         let mut seq: u64 = session.as_ref().map(|s| s.seq).unwrap_or(0);
         let mut beats_since_ack: u32 = 0;
@@ -524,7 +536,11 @@ fn api_error(text: &str, status: reqwest::StatusCode) -> String {
             .as_str()
             .map(|m| format!("HTTP {}: {}", status.as_u16(), m))
             .unwrap_or_else(|| format!("HTTP {}", status.as_u16())),
-        Err(_) => format!("HTTP {}: {}", status.as_u16(), text.chars().take(200).collect::<String>()),
+        Err(_) => format!(
+            "HTTP {}: {}",
+            status.as_u16(),
+            text.chars().take(200).collect::<String>()
+        ),
     }
 }
 
@@ -616,7 +632,11 @@ mod tests {
     /// recording `(status_line, headers, body)` on `requests`.
     async fn mock_rest(
         responses: Vec<(u16, &'static str)>,
-    ) -> (String, mpsc::Receiver<(u16, String, String)>, JoinHandle<()>) {
+    ) -> (
+        String,
+        mpsc::Receiver<(u16, String, String)>,
+        JoinHandle<()>,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (req_tx, req_rx) = mpsc::channel(64);
@@ -673,7 +693,9 @@ mod tests {
                     }
                     body = String::from_utf8_lossy(&req[pos + 4..]).to_string();
                 }
-                let _ = req_tx.send((status, String::from_utf8_lossy(&req).to_string(), body)).await;
+                let _ = req_tx
+                    .send((status, String::from_utf8_lossy(&req).to_string(), body))
+                    .await;
 
                 let (rstatus, rbody) = responses[idx.min(responses.len() - 1)];
                 idx += 1;
@@ -698,11 +720,12 @@ mod tests {
 
     #[tokio::test]
     async fn send_posts_to_rest_with_bot_auth() {
-        let resp = r#"{"id":"1107462566582882336","channel_id":"991234567890123456","content":"hi"}"#;
+        let resp =
+            r#"{"id":"1107462566582882336","channel_id":"991234567890123456","content":"hi"}"#;
         let (base, mut reqs, server) = mock_rest(vec![(200, resp)]).await;
         let (tx, _rx) = mpsc::channel(8);
-        let provider = DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx }))
-            .with_rest_base(base);
+        let provider =
+            DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx })).with_rest_base(base);
 
         let receipt = provider
             .send(&SendMessage {
@@ -722,7 +745,10 @@ mod tests {
             lower.contains("authorization: bot bot_token"),
             "missing bot auth header: {head}"
         );
-        assert!(lower.contains("user-agent: discordbot"), "missing UA: {head}");
+        assert!(
+            lower.contains("user-agent: discordbot"),
+            "missing UA: {head}"
+        );
         assert!(head.contains("POST /channels/991234567890123456/messages"));
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["content"], "hi there");
@@ -735,8 +761,8 @@ mod tests {
         let body = r#"{"message": "Missing Permissions", "code": 50013}"#;
         let (base, _reqs, server) = mock_rest(vec![(403, body)]).await;
         let (tx, _rx) = mpsc::channel(8);
-        let provider = DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx }))
-            .with_rest_base(base);
+        let provider =
+            DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx })).with_rest_base(base);
         let err = provider
             .send(&SendMessage {
                 channel_id: "1".into(),
@@ -755,8 +781,8 @@ mod tests {
         let body = r#"{"message": "You are being rate limited.", "retry_after": 1.2}"#;
         let (base, _reqs, server) = mock_rest(vec![(429, body)]).await;
         let (tx, _rx) = mpsc::channel(8);
-        let provider = DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx }))
-            .with_rest_base(base);
+        let provider =
+            DiscordProvider::new("BOT_TOKEN", Arc::new(TestSink { tx })).with_rest_base(base);
         let err = provider
             .send(&SendMessage {
                 channel_id: "1".into(),

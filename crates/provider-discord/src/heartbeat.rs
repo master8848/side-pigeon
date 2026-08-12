@@ -62,7 +62,9 @@ mod tests {
 
         // Second beat must wait the full interval.
         assert!(
-            timeout(TokioDuration::from_millis(300), hb.tick()).await.is_err(),
+            timeout(TokioDuration::from_millis(300), hb.tick())
+                .await
+                .is_err(),
             "second beat fired too early"
         );
         advance(TokioDuration::from_millis(700)).await; // 700 + 300 = 1000 total
@@ -72,7 +74,9 @@ mod tests {
 
         // Third beat: full interval again.
         assert!(
-            timeout(TokioDuration::from_millis(300), hb.tick()).await.is_err(),
+            timeout(TokioDuration::from_millis(300), hb.tick())
+                .await
+                .is_err(),
             "third beat fired too early"
         );
         advance(TokioDuration::from_millis(700)).await;
