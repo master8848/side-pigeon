@@ -251,15 +251,19 @@ class TestPcClient(unittest.TestCase):
     def test_check_returns_capabilities(self):
         caps = {"protocolVersion": "0.1.0", "providers": ["demo", "telegram"],
                 "methods": ["initialize"], "features": ["send"]}
+        # initialize (id 1) + capabilities (id 2) return the same shape.
         script = ScriptBuilder().init(caps).build()
+        script.append(frame_response(2, caps))
         fake = ScriptedPopen([(lambda c: c[0].endswith("pc"), script)])
         with PcClient(pc_bin="/fake/pc", popen=fake) as client:
             result = client.check()
         self.assertEqual(result, caps)
         cmd, proc = fake.calls[0]
         self.assertEqual(cmd, ["/fake/pc"])
-        self.assertEqual(json.loads(proc.written.splitlines()[0]),
-                         {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        frames = [json.loads(l) for l in proc.written.splitlines()]
+        self.assertEqual([f["method"] for f in frames], ["initialize", "capabilities", "shutdown"])
+        self.assertEqual(frames[0]["id"], 1)
+        self.assertEqual(frames[1]["id"], 2)
 
     def test_send_wires_params_and_receipt(self):
         receipt = {"message_id": "demo-1", "ts": 1700000000001}
@@ -275,6 +279,23 @@ class TestPcClient(unittest.TestCase):
             "provider": "telegram",
             "message": {"channel_id": "c1", "text": "hi there", "reply_to": "m0"},
         })
+
+    def test_send_auto_starts_provider_on_not_started(self):
+        # First send attempt -> -32004 "provider not started"; client must
+        # call listen (start the provider) and retry the send.
+        lines = (ScriptBuilder().init({})
+                 .error(-32004, "provider not started: telegram (call listen first)")
+                 .listen({"started": ["telegram"]})
+                 .send({"message_id": "demo-9", "ts": 9}).build())
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc"), lines)])
+        with PcClient(pc_bin="/fake/pc", popen=fake) as client:
+            receipt = client.send("telegram", "c1", "hi")
+        self.assertEqual(receipt["message_id"], "demo-9")
+        frames = [json.loads(l) for l in fake.calls[0][1].written.splitlines()]
+        methods = [f["method"] for f in frames]
+        self.assertEqual(methods, ["initialize", "send", "listen", "send", "shutdown"])
+        self.assertEqual(frames[1]["params"]["provider"], "telegram")
+        self.assertEqual(frames[3]["params"]["message"]["text"], "hi")
 
     def test_send_omits_reply_to_when_absent(self):
         script = ScriptBuilder().init({}).send({}).build()

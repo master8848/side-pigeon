@@ -26,16 +26,19 @@ import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 
 // ---------------------------------------------------------------------------
 // pc sidecar resolution
 // ---------------------------------------------------------------------------
 
-/** Locate the `pc` sidecar binary: $PC_BIN, repo target/, or PATH. */
+/** Locate the `pc` sidecar binary: $PC_BIN, repo target/, common install spots, PATH. */
 function resolvePcBinary(): string {
   const envBin = process.env.PC_BIN;
   if (envBin) return envBin;
-  // This file lives at <repo>/pi-plugin/extension/; repo root is two levels up.
+  const candidates: string[] = [];
+  // Repo-relative lookup works when the extension runs from the repo
+  // (pi-plugin/extension/provider-connect.ts -> <repo>/target/...).
   let here: string | undefined;
   try {
     here = path.dirname(fileURLToPath(import.meta.url));
@@ -43,14 +46,27 @@ function resolvePcBinary(): string {
     // jiti/CJS fallback
     here = __dirname;
   }
-  const repo = path.resolve(here, "..", "..");
-  for (const candidate of [
-    path.join(repo, "target", "release", "pc"),
-    path.join(repo, "target", "debug", "pc"),
-  ]) {
-    if (existsSync(candidate)) return candidate;
+  if (here) {
+    const repo = path.resolve(here, "..", "..");
+    candidates.push(path.join(repo, "target", "release", "pc"));
+    candidates.push(path.join(repo, "target", "debug", "pc"));
   }
-  return "pc";
+  // Common install spots for the sidecar binary.
+  const home = os.homedir();
+  candidates.push(
+    path.join(home, ".local", "bin", "pc"),
+    path.join(home, ".cargo", "bin", "pc"),
+    "/opt/homebrew/bin/pc",
+    "/usr/local/bin/pc",
+  );
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      /* ignore */
+    }
+  }
+  return "pc"; // fall back to PATH
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +96,16 @@ class PcSidecar {
     this.child = spawn(args[0], args.slice(1), {
       stdio: ["pipe", "pipe", "inherit"], // pc logs go to stderr
       env: { ...process.env, ...env },
+    });
+    // A spawn failure (binary missing) must reject pending requests loudly
+    // instead of hanging the tool call.
+    this.child.on("error", (err) => {
+      for (const entry of this.pending.values()) entry.reject(err);
+      this.pending.clear();
+    });
+    this.child.stdin.on("error", () => {
+      /* EPIPE after sidecar exit: pending requests are rejected via 'error'
+         or the response timeout; do not crash the host. */
     });
     const rl = createInterface({ input: this.child.stdout });
     this.readerDone = new Promise((resolve) => {

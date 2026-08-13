@@ -65,17 +65,29 @@ class PcError(Exception):
 
 
 def find_pc_binary():
-    """Locate the `pc` sidecar: $PC_BIN, the repo's target/ build, or PATH."""
+    """Locate the `pc` sidecar binary.
+
+    Order: $PC_BIN, the provider-connect repo's target/ build (when running
+    from the repo), common user install spots, then PATH.
+    """
     env_bin = os.environ.get("PC_BIN")
     if env_bin:
         return env_bin
-    # This file lives at <repo>/pi-plugin/pc_connect.py.
-    repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-    for candidate in (
-        os.path.join(repo, "target", "release", "pc"),
-        os.path.join(repo, "target", "debug", "pc"),
-    ):
-        if os.path.exists(candidate):
+    candidates = []
+    # This file lives at <repo>/pi-plugin/pc_connect.py (or the skill copy at
+    # ~/.prime/agent/skills/provider-connect/); the repo check is best-effort.
+    repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    candidates.append(os.path.join(repo, "target", "release", "pc"))
+    candidates.append(os.path.join(repo, "target", "debug", "pc"))
+    home = os.path.expanduser("~")
+    candidates += [
+        os.path.join(home, ".local", "bin", "pc"),
+        os.path.join(home, ".cargo", "bin", "pc"),
+        "/opt/homebrew/bin/pc",
+        "/usr/local/bin/pc",
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return "pc"  # fall back to PATH
 
@@ -217,6 +229,7 @@ class PcClient:
         self._notifications = queue.Queue()
         self._next_id = 1  # first request id is 1 (matches pc e2e convention)
         self._id_lock = threading.Lock()
+        self._initialized = False
         self._closed = False
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
@@ -297,17 +310,37 @@ class PcClient:
 
     # -- high-level operations ---------------------------------------------
 
+    def _ensure_initialized(self):
+        """Send `initialize` once per sidecar process (idempotent)."""
+        if not self._initialized:
+            self.request("initialize")
+            self._initialized = True
+
     def check(self):
         """initialize -> capabilities object (providers, methods, features)."""
-        return self.request("initialize")
+        self._ensure_initialized()
+        # Re-query capabilities so a later `check` reflects current state.
+        return self.request("capabilities")
 
     def send(self, provider, channel_id, text, reply_to=None):
-        """Send a text message; returns the SendReceipt dict."""
-        self.request("initialize")
+        """Send a text message; returns the SendReceipt dict.
+
+        The pc sidecar requires a provider to be started before sending
+        ("provider not started: <id> (call listen first)"); on that error we
+        start the provider with `listen` and retry once.
+        """
+        self._ensure_initialized()
         message = {"channel_id": channel_id, "text": text}
         if reply_to is not None:
             message["reply_to"] = reply_to
-        return self.request("send", {"provider": provider, "message": message})
+        try:
+            return self.request("send", {"provider": provider, "message": message})
+        except PcError as exc:
+            if exc.code == -32004 and "not started" in str(exc):
+                # Start the provider, then retry the send once.
+                self.listen(providers=[provider], timeout_secs=0.5)
+                return self.request("send", {"provider": provider, "message": message})
+            raise
 
     def listen(self, providers=None, timeout_secs=None, once=False):
         """Start providers and collect inbound messages.
@@ -317,7 +350,7 @@ class PcClient:
         event.message; with timeout_secs set, stops at the deadline (None =
         wait forever).
         """
-        self.request("initialize")
+        self._ensure_initialized()
         params = {"providers": providers} if providers else None
         listen_result = self.request("listen", params) or {}
         started = listen_result.get("started", listen_result)
@@ -603,37 +636,46 @@ def build_arg_parser():
     parser.add_argument("--json", action="store_true", help="machine-readable JSON output")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("check", help="query provider status / capabilities")
+    # Common flags available on every subcommand (parent parser).
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--pc", default=None, dest="pc",
+                        help="path to the pc sidecar binary (default: $PC_BIN, repo target/, PATH)")
+    common.add_argument("--config", default=None, dest="config",
+                        help="path to a pc JSON config file (default: $PC_CONFIG)")
+    common.add_argument("--json", action="store_true", dest="json",
+                        help="machine-readable JSON output")
+
+    p = sub.add_parser("check", parents=[common], help="query provider status / capabilities")
     p.add_argument("--provider", default=None, help="only report this provider id")
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("send", help="send a message to a chat")
+    p = sub.add_parser("send", parents=[common], help="send a message to a chat")
     p.add_argument("--provider", required=True, help="provider id (telegram, discord, demo)")
     p.add_argument("--chat", required=True, help="chat/room id")
     p.add_argument("--text", default=None, help="message text (default: read stdin)")
     p.add_argument("--reply-to", default=None, help="provider message id this replies to")
     p.set_defaults(func=cmd_send)
 
-    p = sub.add_parser("listen", help="poll for inbound messages")
+    p = sub.add_parser("listen", parents=[common], help="poll for inbound messages")
     p.add_argument("--provider", default=None, help="only start this provider")
     p.add_argument("--timeout", type=float, default=30.0, help="seconds to listen (default 30)")
     p.add_argument("--once", action="store_true", help="stop after the first message")
     p.set_defaults(func=cmd_listen)
 
-    p = sub.add_parser("session", help="print the Prime Agent session file for a chat")
+    p = sub.add_parser("session", parents=[common], help="print the Prime Agent session file for a chat")
     p.add_argument("--provider", required=True)
     p.add_argument("--chat", required=True)
     p.add_argument("--session-dir", default=None, help="session directory (default ~/.prime/agent/sessions)")
     p.set_defaults(func=cmd_session)
 
-    p = sub.add_parser("dispatch", help="deliver text to a Prime Agent session and print the reply")
+    p = sub.add_parser("dispatch", parents=[common], help="deliver text to a Prime Agent session and print the reply")
     p.add_argument("--session", required=True, help="session file path (see `session`)")
     p.add_argument("--text", default=None, help="prompt text (default: read stdin)")
     p.add_argument("--cwd", default=None, help="working directory for the agent")
     p.add_argument("--timeout", type=float, default=600.0, help="seconds to wait for the reply")
     p.set_defaults(func=cmd_dispatch)
 
-    p = sub.add_parser("bridge", help="listen, route to per-chat sessions, and reply")
+    p = sub.add_parser("bridge", parents=[common], help="listen, route to per-chat sessions, and reply")
     p.add_argument("--provider", default=None, help="provider id to listen on")
     p.add_argument("--chat", default=None, help="only handle this chat id")
     p.add_argument("--timeout", type=float, default=None, help="seconds to listen (default: until Ctrl-C / once)")
