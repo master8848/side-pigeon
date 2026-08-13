@@ -131,14 +131,18 @@ python3 -m unittest discover -s tests -v
 Covers: NDJSON/JSON-RPC framing and id matching, `event.message` unwrapping
 and text/media extraction, error-code mapping, request timeout / process-exit
 paths, deterministic per-chat session routing and sanitization, `send` param
-wiring (incl. `reply_to`), and the full `bridge` dispatch loop with mocked
-subprocesses.
+wiring (incl. `reply_to`), `pc-connect` CLI delegation (argv, receipt/event/
+error parsing, stdin for long texts, env/PATH binary resolution), and the
+full `bridge` dispatch loop with mocked subprocesses.
 
 Verified live (see commit messages): `tsc --noEmit --strict` clean against
 pinned `@earendil-works/pi-coding-agent@0.84.1`; a real agent turn called
-`pc_check` against the built sidecar; `dispatch` returned a real agent reply;
-`bridge` routed a demo-provider message into a session and sent the reply
-back with a receipt.
+`pc_check` against the built sidecar (both `-e` and the auto-discovered
+global extension); `dispatch` returned a real agent reply; `bridge` routed a
+demo-provider message into a session and sent the reply back with a receipt;
+`check`/`send`/`listen` ran against the real `pc-connect` binary
+(`cli/target/release/pc-connect`, auto-discovered without `PC_CONNECT_BIN`),
+and `send --reply-to` fell back to the `pc` sidecar.
 
 ## Config reference
 
@@ -161,10 +165,12 @@ back with a receipt.
   during it; messages that arrive while nothing is listening are subject to
   each provider's own buffering policy (e.g. Telegram long-poll re-delivers on
   the next poll; other providers may drop). Long idle gaps can miss messages.
-- **Sends go through `pc`.** The plugin prefers the sidecar (`pc` binary) for
-  all sends and never reimplements provider APIs. If a future `pc-connect`
-  wrapper CLI ships with `send/listen/check` subcommands, point `PC_BIN` at it
-  or alias it — the JSON-RPC surface below it is unchanged.
+- **Sends go through Rust.** One-shot `check`/`send`/`listen` prefer the
+  `pc-connect` CLI (`cli/target/{release,debug}/pc-connect`, `$PC_CONNECT_BIN`,
+  or PATH); `session`/`dispatch`/`bridge` and any send with `--reply-to` use
+  the `pc` sidecar. Neither is reimplemented in Python or TypeScript.
+- `pc-connect send` lacks `--reply-to` (in-thread replies require the `pc`
+  sidecar); the script handles the fallback automatically.
 - `event.draft` / `event.choice` are reserved vocabulary in the sidecar, not
   yet implemented; only `event.message` / `event.error` are consumed.
 - `dispatch`/`bridge` need a configured LLM provider for `prime-agent`

@@ -547,7 +547,7 @@ class TestConnectCli(unittest.TestCase):
         cli = ConnectCli("/fake/pc-connect", popen=ScriptedPopen([]))
         with self.assertRaises(PcError) as ctx:
             cli.send("demo", "c1", "hi", reply_to="m0")
-        self.assertIn("reply_to", str(ctx.exception))
+        self.assertIn("reply-to", str(ctx.exception))
 
     def test_send_error_output_raises_with_code(self):
         err = {"error": {"code": -32004, "message": "provider not started"}}

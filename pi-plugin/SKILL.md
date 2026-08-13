@@ -23,10 +23,16 @@ Two surfaces:
 2. **`pc_connect.py`** (this skill's script, Python stdlib only):
    `check | send | listen | session | dispatch | bridge`.
 
-The `pc` binary must exist first (see README: `cargo build --release -p pc
---features telegram,discord`), and provider credentials come from the
-environment (`PC_TELEGRAM_TOKEN`, `PC_DISCORD_TOKEN`, ...) or a config file
-(`-c path` / `$PC_CONFIG`).
+Backends: the one-shot commands (`check`/`send`/`listen`) **prefer the
+`pc-connect` CLI** (`cli/target/release/pc-connect`, or `$PC_CONNECT_BIN`) when
+it is available — it embeds the same provider logic in one process. Otherwise
+they drive the JSON-RPC `pc` sidecar (`target/debug/pc` / `$PC_BIN`).
+`session`/`dispatch`/`bridge` always use the `pc` sidecar (they need one long-
+lived process with `reply_to` threading).
+
+Credentials come from the environment (`PC_TELEGRAM_TOKEN`,
+`PC_DISCORD_TOKEN`, ...) or a config file (`-c path` / `$PC_CONFIG`); see
+README for build instructions.
 
 ## Quick start
 
@@ -128,6 +134,7 @@ file), `$PC_PROVIDERS` (comma list), `PC_<PROVIDER>_TOKEN`.
 | Variable | Meaning |
 |---|---|
 | `PC_BIN` | path to the `pc` sidecar binary (default: repo `target/{release,debug}/pc`, then `PATH`) |
+| `PC_CONNECT_BIN` | path to the `pc-connect` CLI (default: repo `cli/target/{release,debug}/pc-connect`, `~/.local/bin`, `~/.cargo/bin`, `PATH`); preferred backend for one-shot check/send/listen |
 | `PC_CONFIG` | JSON config file, e.g. `{"providers":[{"id":"telegram","config":{"token":"..."}}]}` |
 | `PC_PROVIDERS` | comma-separated provider ids when no config file is given |
 | `PC_TELEGRAM_TOKEN` | Telegram bot token |
@@ -140,6 +147,8 @@ file), `$PC_PROVIDERS` (comma list), `PC_<PROVIDER>_TOKEN`.
 - Not a daemon: messages arrive only while `listen`/`bridge` is running.
 - No read receipts/seen state; each `listen` returns whatever arrived in the
   window. Long gaps can miss messages (providers buffer per their own policy).
-- Sending is done by `pc` (the sidecar), never reimplemented here.
+- Sending is done by `pc`/`pc-connect` (Rust), never reimplemented here.
+- `pc-connect send` has no `--reply-to`; when `reply_to` is set the script
+  automatically uses the `pc` sidecar instead.
 - `event.draft`/`event.choice` are reserved vocabulary, not implemented by pc.
 - `dispatch`/`bridge` require a configured LLM provider for `prime-agent`.
