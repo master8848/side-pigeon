@@ -1,0 +1,29 @@
+{
+  "sessions": [
+    {
+      "id": "opencode-main",
+      "provider": "telegram",
+      "chat": "123456789",
+      "agent": "opencode",
+      "session": "0462509668a54fc6db0a1cf67b97a0f44aa1ab9b",
+      "project": "/Users/apple/code/my-repo",
+      "comment": "session id: `opencode session list` or ~/.local/share/opencode/storage/session/<id>/"
+    },
+    {
+      "id": "prime-research",
+      "provider": "telegram",
+      "chat": "987654321",
+      "agent": "prime",
+      "session": "research-zeroclaw",
+      "comment": "prime agent NAME from `prime-agent list`; delivered via `prime-agent send <name> <text>`"
+    },
+    {
+      "id": "custom",
+      "provider": "demo",
+      "chat": "demo-room",
+      "agent": "opencode",
+      "session": "any-session-id",
+      "handoff": ["opencode", "run", "--session", "{session}", "--dir", "/tmp", "{text}"]
+    }
+  ]
+}
