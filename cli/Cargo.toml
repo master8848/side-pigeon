@@ -1,0 +1,60 @@
+# pc-connect — the thin connection CLI for provider-connect.
+#
+# DESIGN (documented in README.md): this crate is a STANDALONE workspace
+# (empty `[workspace]` table below) so it is NOT a member of the root
+# provider-connect workspace and never touches the root Cargo.toml /
+# Cargo.lock — siblings' builds cannot collide with ours and vice versa.
+# It depends on the provider crates by path (../crates/...) and embeds
+# the same provider logic in-process (no sidecar spawn).
+#
+# SUPPLY CHAIN: every dependency below is already in the provider-connect
+# dependency closure and was audited in docs/supply-chain.md (all crates >=
+# 14 days old on crates.io). No new external crates are introduced by this
+# package. Exact resolved versions are pinned by the committed Cargo.lock.
+[package]
+name = "pc-connect"
+# Standalone crate: version/edition/license are hardcoded (no workspace
+# inheritance — cli/ is its own workspace root, see the `[workspace]` table).
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Thin connection CLI for provider-connect: send / listen / check over the same providers as the `pc` sidecar (embedded, single binary)"
+
+# Standalone workspace root: `cargo build` inside cli/ builds ONLY this crate
+# + its path deps. The root provider-connect workspace is untouched.
+[workspace]
+
+[[bin]]
+name = "pc-connect"
+path = "src/main.rs"
+
+[features]
+# Built-in echo provider for local testing / demos (no network needed).
+default = ["demo"]
+demo = []
+# Real providers are compile-time feature-gated (same contract as bin/pc).
+telegram = ["dep:provider-telegram"]
+discord = ["dep:provider-discord"]
+
+[dependencies]
+provider-core = { path = "../crates/provider-core" }
+provider-transport = { path = "../crates/provider-transport" }
+provider-telegram = { path = "../crates/provider-telegram", optional = true }
+provider-discord = { path = "../crates/provider-discord", optional = true }
+# Same version ranges as the root workspace ([workspace.dependencies]); the
+# committed Cargo.lock is the exact pin. No new crates beyond the audited set.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "io-std", "io-util", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Same release profile as the root workspace: small stripped binaries.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
