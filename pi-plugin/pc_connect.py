@@ -92,6 +92,37 @@ def find_pc_binary():
     return "pc"  # fall back to PATH
 
 
+def find_connect_binary():
+    """Locate the `pc-connect` CLI (preferred for one-shot operations).
+
+    Order: $PC_CONNECT_BIN, the provider-connect repo's target/ build, common
+    user install spots, then PATH. Returns None when not found (the caller
+    falls back to the JSON-RPC `pc` sidecar).
+    """
+    env_bin = os.environ.get("PC_CONNECT_BIN")
+    if env_bin:
+        return env_bin
+    candidates = []
+    repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    candidates.append(os.path.join(repo, "target", "release", "pc-connect"))
+    candidates.append(os.path.join(repo, "target", "debug", "pc-connect"))
+    home = os.path.expanduser("~")
+    candidates += [
+        os.path.join(home, ".local", "bin", "pc-connect"),
+        os.path.join(home, ".cargo", "bin", "pc-connect"),
+        "/opt/homebrew/bin/pc-connect",
+        "/usr/local/bin/pc-connect",
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(directory or ".", "pc-connect")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def sanitize_component(value, max_len=80):
     """Sanitize a chat/provider id into a filesystem-safe token."""
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(value)).strip("._")
@@ -403,6 +434,115 @@ class PcClient:
         return False
 
 
+class ConnectCli:
+    """Wrapper for the `pc-connect` CLI (cli/, subcommands send/listen/check).
+
+    Preferred for one-shot operations when the binary is available: it embeds
+    the same provider logic as the `pc` sidecar in a single process. Output
+    contracts (cli/src/ops.rs):
+      send   -> {"message_id", "ts"} on stdout ({"error": {...}} + exit != 0)
+      listen -> NDJSON {"event":"message","message":{...}} /
+                {"event":"error","error":{...}} per line
+      check  -> {"ok", "protocolVersion", "providers": [{provider, ok, detail, code}]}
+    """
+
+    def __init__(self, binary, popen=None):
+        self.binary = binary
+        self._popen = popen or POPEN
+
+    def _spawn(self, args):
+        return self._popen(
+            [self.binary] + args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=dict(os.environ),
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+    def send(self, provider, channel_id, text, reply_to=None, timeout=60.0):
+        """One-shot send. reply_to is not supported by pc-connect: raise."""
+        if reply_to is not None:
+            raise PcError(None, "pc-connect send has no --reply-to; use the pc sidecar for reply threading")
+        args = ["send", "--provider", provider, "--chat", channel_id, "--json"]
+        use_stdin = "\n" in text or len(text) > 4000
+        if use_stdin:
+            args += ["--text-file", "-"]
+        else:
+            args += ["--text", text]
+        proc = self._spawn(args)
+        try:
+            if use_stdin:
+                proc.stdin.write(text + "\n")
+                proc.stdin.flush()
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        out, _err = proc.communicate(timeout=timeout)
+        if proc.returncode != 0:
+            raise self._error_from_output(out)
+        return json.loads(out)
+
+    def listen(self, providers=None, timeout_secs=None, once=False, timeout=300.0):
+        """One-shot listen; returns the same shape as PcClient.listen()."""
+        args = ["listen", "--json"]
+        if providers:
+            args += ["--providers", ",".join(providers)]
+        if timeout_secs is not None:
+            args += ["--timeout", str(int(timeout_secs))]
+        if once:
+            args += ["--once"]
+        proc = self._spawn(args)
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        messages, errors = [], []
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("event") == "message" and isinstance(event.get("message"), dict):
+                messages.append(event["message"])
+            elif event.get("event") == "error":
+                errors.append(event.get("error"))
+        proc.wait(timeout=timeout)
+        return {"started": list(providers or []), "messages": messages, "errors": errors}
+
+    def check(self, provider=None, timeout=120.0):
+        """One-shot connectivity check; returns the pc-connect report dict."""
+        args = ["check", "--json"]
+        if provider:
+            args += ["--provider", provider]
+        proc = self._spawn(args)
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        out, _err = proc.communicate(timeout=timeout)
+        if proc.returncode != 0:
+            raise self._error_from_output(out)
+        return json.loads(out)
+
+    @staticmethod
+    def _error_from_output(out):
+        try:
+            payload = json.loads(out)
+            err = payload.get("error") or {}
+            return PcError(err.get("code"), err.get("message") or out.strip(), err.get("data"))
+        except ValueError:
+            return PcError(None, "pc-connect failed: {}".format(out.strip() or "unknown error"))
+
+
 def dispatch_to_agent(text, session_file, cwd=None, prime_agent_bin=None, timeout=600.0,
                       popen=None, env=None):
     """Deliver `text` into the Prime Agent session at `session_file`.
@@ -550,8 +690,30 @@ def bridge(provider=None, channel_id=None, config_path=None, pc_bin=None,
 # CLI
 # ---------------------------------------------------------------------------
 
+def _connect_client(args):
+    """Return (backend_label, client) preferring pc-connect for one-shots."""
+    binary = args.connect_bin
+    if binary is None:
+        binary = find_connect_binary()
+    if binary is not None:
+        return ("pc-connect", ConnectCli(binary))
+    return ("pc", PcClient(pc_bin=args.pc, config_path=args.config))
+
+
 def cmd_check(args):
-    with PcClient(pc_bin=args.pc, config_path=args.config) as client:
+    label, client = _connect_client(args)
+    if label == "pc-connect":
+        report = client.check(provider=args.provider)
+        if args.json:
+            print(json.dumps(report, indent=2, default=str))
+        else:
+            print("backend: pc-connect")
+            print("protocolVersion: {}".format(report.get("protocolVersion", "?")))
+            for entry in report.get("providers", []):
+                status = "OK" if entry.get("ok") else "FAIL"
+                print("provider {}: {} {}".format(entry.get("provider"), status, entry.get("detail", "")))
+        return 0 if report.get("ok") else 1
+    with client as client:
         caps = client.check()
     if args.provider:
         caps = dict(caps, providers=[p for p in caps.get("providers", []) if p == args.provider])
@@ -574,6 +736,17 @@ def cmd_send(args):
     if not text:
         print("pc_connect: send requires --text or piped stdin", file=sys.stderr)
         return 2
+    # pc-connect has no --reply-to; fall back to the pc sidecar for replies.
+    if args.reply_to is None:
+        label, client = _connect_client(args)
+        if label == "pc-connect":
+            receipt = client.send(args.provider, args.chat, text)
+            if args.json:
+                print(json.dumps(receipt, indent=2, default=str))
+            else:
+                print("sent message_id={} ts={} (via pc-connect)".format(
+                    receipt.get("message_id"), receipt.get("ts")))
+            return 0
     with PcClient(pc_bin=args.pc, config_path=args.config) as client:
         receipt = client.send(args.provider, args.chat, text, reply_to=args.reply_to)
     if args.json:
@@ -584,9 +757,14 @@ def cmd_send(args):
 
 
 def cmd_listen(args):
-    with PcClient(pc_bin=args.pc, config_path=args.config) as client:
+    label, client = _connect_client(args)
+    if label == "pc-connect":
         result = client.listen(providers=[args.provider] if args.provider else None,
                                timeout_secs=args.timeout, once=args.once)
+    else:
+        with client as client:
+            result = client.listen(providers=[args.provider] if args.provider else None,
+                                   timeout_secs=args.timeout, once=args.once)
     if args.json:
         print(json.dumps(result, indent=2, default=str))
     else:
