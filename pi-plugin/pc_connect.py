@@ -106,6 +106,9 @@ def find_connect_binary():
     repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     candidates.append(os.path.join(repo, "target", "release", "pc-connect"))
     candidates.append(os.path.join(repo, "target", "debug", "pc-connect"))
+    # cli/ is a standalone cargo workspace -> its binary lands in cli/target.
+    candidates.append(os.path.join(repo, "cli", "target", "release", "pc-connect"))
+    candidates.append(os.path.join(repo, "cli", "target", "debug", "pc-connect"))
     home = os.path.expanduser("~")
     candidates += [
         os.path.join(home, ".local", "bin", "pc-connect"),
@@ -450,10 +453,13 @@ class ConnectCli:
         self.binary = binary
         self._popen = popen or POPEN
 
-    def _spawn(self, args):
+    def _spawn(self, args, stdin=None):
+        # DEVNULL unless input is actually needed: pc-connect exits fast, and a
+        # PIPE that the child closes triggers a ValueError on communicate()'s
+        # stdin flush (closed-file race).
         return self._popen(
             [self.binary] + args,
-            stdin=subprocess.PIPE,
+            stdin=stdin or subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=dict(os.environ),
@@ -466,7 +472,7 @@ class ConnectCli:
     def send(self, provider, channel_id, text, reply_to=None, timeout=60.0):
         """One-shot send. reply_to is not supported by pc-connect: raise."""
         if reply_to is not None:
-            raise PcError(None, "pc-connect send has no --reply-to; use the pc sidecar for reply threading")
+            raise PcError(None, "pc-connect send has no reply_to (--reply-to) support; use the pc sidecar for reply threading")
         args = ["send", "--provider", provider, "--chat", channel_id, "--json"]
         use_stdin = "\n" in text or len(text) > 4000
         if use_stdin:
@@ -474,13 +480,9 @@ class ConnectCli:
         else:
             args += ["--text", text]
         proc = self._spawn(args)
-        try:
-            if use_stdin:
-                proc.stdin.write(text + "\n")
-                proc.stdin.flush()
-            proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
+        if use_stdin:
+            proc.stdin.write(text + "\n")
+            proc.stdin.flush()
         out, _err = proc.communicate(timeout=timeout)
         if proc.returncode != 0:
             raise self._error_from_output(out)
@@ -496,10 +498,6 @@ class ConnectCli:
         if once:
             args += ["--once"]
         proc = self._spawn(args)
-        try:
-            proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
         messages, errors = [], []
         for line in proc.stdout:
             line = line.strip()
@@ -524,10 +522,6 @@ class ConnectCli:
         if provider:
             args += ["--provider", provider]
         proc = self._spawn(args)
-        try:
-            proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
         out, _err = proc.communicate(timeout=timeout)
         if proc.returncode != 0:
             raise self._error_from_output(out)
@@ -818,6 +812,10 @@ def build_arg_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pc", default=None, dest="pc",
                         help="path to the pc sidecar binary (default: $PC_BIN, repo target/, PATH)")
+    common.add_argument("--connect-bin", default=None, dest="connect_bin",
+                        help="path to the pc-connect CLI binary (default: $PC_CONNECT_BIN, "
+                             "repo target/, home spots, PATH); preferred for one-shot check/"
+                             "send/listen when found")
     common.add_argument("--config", default=None, dest="config",
                         help="path to a pc JSON config file (default: $PC_CONFIG)")
     common.add_argument("--json", action="store_true", dest="json",

@@ -9,13 +9,16 @@ import io
 import json
 import os
 import sys
+import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pc_connect
-from pc_connect import (PcClient, PcError, bridge, build_prompt, dispatch_to_agent,
-                        message_text, parse_event_message, session_file_for)
+from pc_connect import (ConnectCli, PcClient, PcError, bridge, build_prompt,
+                        dispatch_to_agent, find_connect_binary, message_text,
+                        parse_event_message, session_file_for)
 
 
 # ---------------------------------------------------------------------------
@@ -49,12 +52,17 @@ class FakeProc:
         self.stdout = io.StringIO("".join(line + "\n" for line in stdout_lines))
         self.stdin = CapturedStdin()
         self.exit_code = exit_code
+        self.returncode = exit_code
         self.killed = False
         self.closed = False
 
     def wait(self, timeout=None):
         self.closed = True
         return self.exit_code
+
+    def communicate(self, timeout=None):
+        self.closed = True
+        return (self.stdout.getvalue(), "")
 
     def kill(self):
         self.killed = True
@@ -100,13 +108,17 @@ class ScriptedPopen:
     """
 
     def __init__(self, scripts):
+        # script entries: (match_fn, stdout_lines, exit_code=0)
         self.scripts = scripts
         self.calls = []  # (cmd, FakeProc)
 
     def __call__(self, cmd, **kwargs):
-        for match, lines in self.scripts:
+        for entry in self.scripts:
+            match = entry[0]
+            lines = entry[1]
+            exit_code = entry[2] if len(entry) > 2 else 0
             if match(cmd):
-                proc = FakeProc(lines)
+                proc = FakeProc(lines, exit_code=exit_code)
                 self.calls.append((list(cmd), proc))
                 return proc
         raise AssertionError("unexpected Popen call: {}".format(cmd))
@@ -505,6 +517,118 @@ class TestBridge(unittest.TestCase):
         self.assertIsNone(result["replies"][0]["receipt"])
         pc_frames = [json.loads(l) for l in fake.calls[0][1].written.splitlines()]
         self.assertEqual([f["method"] for f in pc_frames], ["initialize", "listen", "shutdown"])
+
+# ---------------------------------------------------------------------------
+# pc-connect CLI delegation (preferred backend for one-shot ops)
+# ---------------------------------------------------------------------------
+
+class TestConnectCli(unittest.TestCase):
+    def test_send_parses_receipt(self):
+        receipt = {"message_id": "demo-9", "ts": 1700000000009}
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps(receipt)])])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        result = cli.send("demo", "c1", "hi")
+        self.assertEqual(result, receipt)
+        cmd, proc = fake.calls[0]
+        self.assertEqual(cmd, ["/fake/pc-connect", "send", "--provider", "demo",
+                               "--chat", "c1", "--json", "--text", "hi"])
+        self.assertEqual(proc.written, "")  # short text goes on argv, not stdin
+
+    def test_send_long_text_uses_stdin(self):
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps({})])])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        cli.send("demo", "c1", "line1\nline2")
+        cmd, proc = fake.calls[0]
+        self.assertIn("--text-file", cmd)
+        self.assertIn("-", cmd)
+        self.assertIn("line1\nline2", proc.written)
+
+    def test_send_reply_to_unsupported_raises(self):
+        cli = ConnectCli("/fake/pc-connect", popen=ScriptedPopen([]))
+        with self.assertRaises(PcError) as ctx:
+            cli.send("demo", "c1", "hi", reply_to="m0")
+        self.assertIn("reply_to", str(ctx.exception))
+
+    def test_send_error_output_raises_with_code(self):
+        err = {"error": {"code": -32004, "message": "provider not started"}}
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps(err)], 2)])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        with self.assertRaises(PcError) as ctx:
+            cli.send("demo", "c1", "hi")
+        self.assertEqual(ctx.exception.code, -32004)
+        self.assertIn("not started", str(ctx.exception))
+
+    def test_listen_parses_event_lines(self):
+        msg = sample_message()
+        err = {"provider": "telegram", "code": -32005, "message": "network down"}
+        lines = [json.dumps({"event": "message", "message": msg}),
+                 json.dumps({"event": "error", "error": err})]
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), lines)])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        result = cli.listen(providers=["telegram"], timeout_secs=5, once=True)
+        self.assertEqual(result["started"], ["telegram"])
+        self.assertEqual(len(result["messages"]), 1)
+        self.assertEqual(result["messages"][0]["id"], "m1")
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertEqual(result["errors"][0]["code"], -32005)
+        cmd, _ = fake.calls[0]
+        self.assertEqual(cmd, ["/fake/pc-connect", "listen", "--json",
+                               "--providers", "telegram", "--timeout", "5", "--once"])
+
+    def test_check_parses_report(self):
+        report = {"ok": True, "protocolVersion": "0.1.0",
+                  "providers": [{"provider": "demo", "ok": True, "detail": "ok", "code": None}]}
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps(report)])])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        self.assertEqual(cli.check(), report)
+        cmd, _ = fake.calls[0]
+        self.assertEqual(cmd, ["/fake/pc-connect", "check", "--json"])
+
+    def test_check_with_provider_filter(self):
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps({"ok": True})])])
+        ConnectCli("/fake/pc-connect", popen=fake).check(provider="telegram")
+        cmd, _ = fake.calls[0]
+        self.assertIn("--provider", cmd)
+        self.assertEqual(cmd[cmd.index("--provider") + 1], "telegram")
+
+    def test_check_error_raises(self):
+        err = {"error": {"code": -32001, "message": "bad config"}}
+        fake = ScriptedPopen([(lambda c: c[0].endswith("pc-connect"), [json.dumps(err)], 2)])
+        cli = ConnectCli("/fake/pc-connect", popen=fake)
+        with self.assertRaises(PcError) as ctx:
+            cli.check()
+        self.assertEqual(ctx.exception.code, -32001)
+
+
+class TestFindConnectBinary(unittest.TestCase):
+    def test_env_override(self):
+        with mock.patch.dict(os.environ, {"PC_CONNECT_BIN": "/opt/pc-connect"}):
+            self.assertEqual(find_connect_binary(), "/opt/pc-connect")
+
+    def test_found_on_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "pc-connect")
+            with open(path, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(path, 0o755)
+            with mock.patch.dict(os.environ, {"PATH": d}, clear=False):
+                # Patch out repo/home candidates (they exist in a real
+                # checkout with a built cli) so PATH resolution is the
+                # only source — deterministic regardless of build state.
+                with mock.patch("pc_connect.os.path.isfile", side_effect=lambda c: c == path), \
+                        mock.patch("pc_connect.os.path.isdir", return_value=False), \
+                        mock.patch("pc_connect.os.access", side_effect=lambda c, m: c == path):
+                    self.assertEqual(find_connect_binary(), path)
+
+    def test_not_found_returns_none(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.dict(os.environ, {"PATH": d}, clear=False):
+            # Home-spot and repo candidates are patched out so the result is
+            # deterministic regardless of the checkout state.
+            with mock.patch("pc_connect.os.path.isfile", return_value=False), \
+                    mock.patch("pc_connect.os.path.isdir", return_value=False), \
+                    mock.patch("pc_connect.os.access", return_value=False):
+                self.assertIsNone(find_connect_binary())
 
 
 if __name__ == "__main__":
