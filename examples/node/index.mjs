@@ -177,7 +177,8 @@ async function main() {
 
   const receipt = await client.request('send', {
     provider,
-    // Full SendMessage wire shape (reply_to/attachments are required fields).
+    // Full SendMessage wire shape (reply_to/attachments are optional fields —
+    // serde(default) fills them when omitted).
     message: {
       channel_id: channelId,
       text: `hello from provider-connect example (node pid ${process.pid})`,

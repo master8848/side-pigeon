@@ -40,12 +40,19 @@ CONFIG:
       PC_TELEGRAM_TOKEN=123:abc        # per-provider token
       PC_TELEGRAM_CONFIG={"base_url":"..."}   # optional extra JSON (merged)
 
+    Provider config keys (JSON file or PC_<ID>_CONFIG):
+      telegram: token, base_url, poll_interval_secs, long_poll_timeout_secs,
+                request_timeout_secs
+      discord:  token, gateway_url, rest_base, intents (u64 bitmask),
+                request_timeout_secs
+
     Provider ids: "demo" (built-in echo provider), "telegram", "discord"
     (compile-time gated behind the cargo features `telegram` / `discord`).
 
 PROTOCOL (stdout, one JSON document per line):
     Requests:  initialize, capabilities, listen, send, shutdown
-    Notifications: event.message, event.draft, event.choice, event.error
+    Notifications: event.message, event.error
+    (event.draft/event.choice are reserved vocabulary, not yet implemented)
 "#;
 
 enum Action {
@@ -187,10 +194,11 @@ fn init_tracing() {
 }
 
 /// Feature-gated provider construction. Each branch depends only on
-/// `provider-core` types plus the provider crate's own constructor.
+/// `provider-core` types plus the provider crate's own builder.
 ///
-/// Constructor contract (matches provider-telegram / provider-discord):
-/// `Provider::new(token: String, events: Arc<dyn ProviderEvents>)`.
+/// The full merged config blob (`PC_*_CONFIG` / JSON file) is applied — not
+/// just `token` — so `base_url`, `poll_interval`, `intents` and timeouts
+/// actually reach the providers (review P1: config dead-end).
 fn build_provider(
     id: &str,
     config: &serde_json::Value,
@@ -202,16 +210,38 @@ fn build_provider(
         #[cfg(feature = "telegram")]
         "telegram" => {
             let token = config_token(id, config)?;
-            Ok(Box::new(provider_telegram::TelegramProvider::new(
-                token, events,
-            )))
+            let mut provider = provider_telegram::TelegramProvider::new(token, events);
+            if let Some(base) = config_str(id, config, "base_url")? {
+                provider = provider.with_base_url(base);
+            }
+            if let Some(secs) = config_u64(id, config, "poll_interval_secs")? {
+                provider = provider.with_poll_interval(std::time::Duration::from_secs(secs));
+            }
+            if let Some(secs) = config_u64(id, config, "long_poll_timeout_secs")? {
+                provider = provider.with_long_poll_timeout_secs(secs);
+            }
+            if let Some(secs) = config_u64(id, config, "request_timeout_secs")? {
+                provider = provider.with_request_timeout(std::time::Duration::from_secs(secs));
+            }
+            Ok(Box::new(provider))
         }
         #[cfg(feature = "discord")]
         "discord" => {
             let token = config_token(id, config)?;
-            Ok(Box::new(provider_discord::DiscordProvider::new(
-                token, events,
-            )))
+            let mut provider = provider_discord::DiscordProvider::new(token, events);
+            if let Some(url) = config_str(id, config, "gateway_url")? {
+                provider = provider.with_gateway_url(url);
+            }
+            if let Some(base) = config_str(id, config, "rest_base")? {
+                provider = provider.with_rest_base(base);
+            }
+            if let Some(intents) = config_u64(id, config, "intents")? {
+                provider = provider.with_intents(intents);
+            }
+            if let Some(secs) = config_u64(id, config, "request_timeout_secs")? {
+                provider = provider.with_request_timeout(std::time::Duration::from_secs(secs));
+            }
+            Ok(Box::new(provider))
         }
         other => Err(format!(
             "unknown provider '{other}' (compiled in: {})",
@@ -227,6 +257,28 @@ fn config_token(id: &str, config: &serde_json::Value) -> Result<String, String> 
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| format!("provider '{id}' requires config.token"))
+}
+
+#[cfg(any(feature = "telegram", feature = "discord"))]
+fn config_str(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    match config.get(key) {
+        None => Ok(None),
+        Some(v) => v
+            .as_str()
+            .map(|s| Some(s.to_string()))
+            .ok_or_else(|| format!("provider '{id}' config.{key} must be a string")),
+    }
+}
+
+#[cfg(any(feature = "telegram", feature = "discord"))]
+fn config_u64(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<u64>, String> {
+    match config.get(key) {
+        None => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| format!("provider '{id}' config.{key} must be a non-negative integer")),
+    }
 }
 
 /// Provider ids compiled into this binary.
