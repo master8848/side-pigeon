@@ -2,8 +2,12 @@
   "name": "@provider-connect/opencode-plugin",
   "version": "0.1.0",
   "description": "opencode plugin bridging messaging providers (telegram/discord/demo) through the provider-connect `pc` sidecar (JSON-RPC 2.0 over stdio)",
-  "type": "module",
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
   "main": "./dist/index.js",
   "exports": {
     ".": {
@@ -15,29 +19,23 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test",
-    "prepublishOnly": "npm run typecheck && npm test",
-    "lint": "eslint src test && prettier --check src test",
-    "format": "prettier --write src test"
+    "test": "bun run build && node --test",
+    "lint": "oxlint --type-aware .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt ."
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.9"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "eslint": "10.8.0",
-    "prettier": "3.9.6",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.65.0"
+    "typescript": "7.0.2"
   },
   "engines": {
+    "bun": ">=1.4.0",
     "node": ">=20"
   }
 }
