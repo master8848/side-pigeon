@@ -3,7 +3,7 @@ name = "pc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "provider-connect sidecar binary: JSON-RPC 2.0 over stdio"
+description = "side-pigeon sidecar binary: JSON-RPC 2.0 over stdio"
 
 [[bin]]
 name = "pc"

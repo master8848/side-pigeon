@@ -13,12 +13,22 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/lib-prj/provider-connect"
-description = "Rust sidecar connecting AI agents to messaging providers with a language-agnostic JSON-RPC API"
+license = "MIT"
+authors = ["Saurav Sanjel <master8848@users.noreply.github.com>"]
+repository = "https://github.com/master8848/side-pigeon"
+description = "Rust sidecar connecting AI agents to messaging providers with a language-agnostic JSON-RPC API — side-pigeon"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["rt", "macros", "sync", "io-std", "io-util", "time", "net", "signal"] }
+tokio = { version = "1", features = [
+  "rt",
+  "macros",
+  "sync",
+  "io-std",
+  "io-util",
+  "time",
+  "net",
+  "signal",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

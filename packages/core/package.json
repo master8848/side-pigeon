@@ -1,29 +1,47 @@
 {
-  "name": "@provider-connect/core",
+  "name": "@mbsks/side-pigeon",
   "version": "0.1.0",
-  "description": "Headless provider-connect client — works with any agent (Opencode / Pi / Eliza / custom Node)",
-  "type": "module",
+  "description": "side-pigeon — headless client for the side-pigeon Rust sidecar (Telegram, Discord, ... via JSON-RPC 2.0 over stdio)",
+  "keywords": [
+    "ai-agent",
+    "discord",
+    "json-rpc",
+    "messaging",
+    "pigeon",
+    "sidecar",
+    "telegram"
+  ],
   "license": "MIT",
+  "author": "Saurav Sanjel <master8848@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/master8848/side-pigeon.git"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     }
   },
-  "files": [
-    "src",
-    "README.md"
-  ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "lint": "oxlint --type-aware .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt ."
   },
   "dependencies": {},
   "devDependencies": {
     "@types/node": "24.13.3",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
+    "bun": ">=1.4.0",
     "node": ">=20"
   }
 }
