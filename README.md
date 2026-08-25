@@ -2,27 +2,28 @@
 
 > **side-pigeon** — Rust sidecar + headless JS that connects any Node/Bun app or AI agent to messaging providers (Telegram, Discord, Slack, ...) over a clean JSON-RPC 2.0 API.
 
-- **Rust sidecar** (`pc`/`side-pigeon` binary) owns the provider connections (Telegram long-poll, Discord Gateway WS, ...). Idle RSS target **< 30–50 MB** (fixes the ~400 MB idle-RAM trap of JS SDKs).
+- **Rust sidecar** (`pc` binary) owns the provider connections (Telegram long-poll, Discord Gateway WS, ...). Idle RSS target **< 30–50 MB** (fixes the ~400 MB idle-RAM trap of JS SDKs).
 - **Headless TS** (`@mbsks/side-pigeon`) spawns that sidecar over **stdio NDJSON**, speaks `initialize → listen → send → shutdown` (`event.message`/`event.error`).
-- **Transports**: stdio (primary, default lean), WebSocket and HTTP (feature-gated `pc serve`).
-- **Plugins**: local TypeScript extensions for **Opencode** and **Pi** that reuse the same sidecar.
+- **Transports**: stdio (default, lean), WebSocket and HTTP (`pc serve`).
+- **Plugins**: TypeScript extensions for **Opencode** and **Pi** that reuse the same sidecar.
 
-Status: implementation in progress (see [`docs/architecture.md`](docs/architecture.md)). Prerelease `0.1.0`.
+Prerelease `0.1.0` — see [`docs/architecture.md`](docs/architecture.md).
 
 ## Install
 
 ```sh
-# sidecar (lean stdio by default; add providers as features)
-cargo install --path bin/pc          # binary `pc`
+# sidecar — daemon includes durable SQLite log by default
+cargo install --path bin/pc
 cargo install --path bin/pc --features telegram,discord,http,ws
 
-# headless JS (any agent or plain app)
+# lean build with no SQLite (library embed or minimal install)
+cargo install --path bin/pc --no-default-features --features demo
+
+# headless JS
 bun add @mbsks/side-pigeon
 ```
 
-Requires **Rust 1.97.1** (see `rust-toolchain.toml` / `mise.toml`) and **Bun ≥ 1.4 / Node ≥ 20**.
-
-`bun` is the package manager — `npm` also works but we commit `bun.lockb`.
+Requires **Rust 1.97.1** and **Bun ≥ 1.4 / Node ≥ 20**. `bun` is the package manager.
 
 ## Quick start
 
@@ -30,18 +31,18 @@ Requires **Rust 1.97.1** (see `rust-toolchain.toml` / `mise.toml`) and **Bun ≥
 pc --help
 pc init                 # writes pc.config.json if none exists
 pc check                # initialize + smoke-check configured providers
-pc serve                # bod server: ws :8787 + http :8788 + stdio fan-out
+pc serve                # ws :8787 + http :8788 + stdio fan-out
 pc                      # stdio sidecar (default, no subcommand)
 ```
 
-One-shot ops without a daemon:
+One-shot (no daemon):
 
 ```sh
 pc send --provider demo --chat my-room --text "hello"
 pc listen --once --timeout 10
 ```
 
-Headless TS (any Node/Bun process, 5 lines):
+Headless TS (5 lines):
 
 ```ts
 import { createProviderClient } from "@mbsks/side-pigeon";
@@ -71,62 +72,86 @@ CLI flag `pc --config path/to/pc.config.json` overrides. Env fallback:
 ```
 PC_PROVIDERS=demo,telegram
 PC_TELEGRAM_TOKEN=123:abc
-PC_TELEGRAM_CONFIG={"base_url":"https://api.telegram.org","poll_interval_secs":2}
+PC_TELEGRAM_CONFIG={"base_url":"https://api.telegram.org"}
+PC_CONFIG=/path/to/pc.config.json
 ```
 
-`PC_<ID>_CONFIG` must be a JSON object; otherwise startup fails closed.
-
-Also `PC_CONFIG=/path/to/pc.config.json`.
+`PC_<ID>_CONFIG` must be a JSON object; otherwise startup fails.
 
 ## Provider matrix
 
-| Provider | Feature flag     | `id`       | Transport                | Needs   |
-| -------- | ---------------- | ---------- | ------------------------ | ------- |
-| demo     | `demo` (default) | `demo`     | echo, no network         | nothing |
-| telegram | `telegram`       | `telegram` | long-poll (`getUpdates`) | `token` |
-| discord  | `discord`        | `discord`  | gateway WS + REST        | `token` |
+| Provider | Feature   | `id`       | Transport                | Needs   |
+| -------- | --------- | ---------- | ------------------------ | ------- |
+| demo     | `demo`    | `demo`     | echo, no network         | nothing |
+| telegram | `telegram`| `telegram` | long-poll (`getUpdates`) | `token` |
+| discord  | `discord` | `discord`  | gateway WS + REST        | `token` |
 
-HTTP/WS serving is behind `http`/`ws` features (`pc serve`). Idle sidecar can stay stdio-only and lean.
+HTTP/WS serving is behind `http`/`ws` features. Idle sidecar can stay stdio-only.
 
-## `pc serve` (bod server)
+## `pc serve` — daemon
+
+Holds provider connections once and fans out to many clients. Clients can disconnect and reconnect without losing data when persistence is on.
 
 ```
-pc serve [--ws :8787] [--http :8788]
-GET  /health                  -> capabilities (+ transport list)
-POST /api/providers/:id/send  -> {channel_id, text, reply_to?, attachments?} -> receipt
-GET  /api/events              -> SSE fan-out of event.message / event.error
-POST /rpc                     -> JSON-RPC batch (same dispatch as stdio/WS)
-GET  /ws                     -> WS JSON-RPC (feature `ws`)
+pc serve [--ws :8787] [--http :8788] [--persist ./pc-events.db] [--watch]
+
+GET  /health                     -> capabilities
+POST /api/providers/:id/send     -> {channel_id, text} -> receipt
+GET  /api/events                 -> SSE live stream
+GET  /api/events?since=CURSOR    -> replay missed events (needs --persist)
+POST /rpc                        -> JSON-RPC (same as stdio/WS)
+GET  /ws                         -> WS JSON-RPC (needs --features ws)
 ```
 
-Agents connect/disconnect without provider reconnect.
+### Persistence (at-least-once)
+
+Two modes:
+
+- **Daemon** (`pc serve`): durable by default. Every `event.message` / `event.error` is appended to a local SQLite file (WAL mode) and can be replayed.
+- **Library** (`provider-core` / `provider-ffi` / `provider-transport` as a dependency): no SQLite by default — you own storage.
+
+```sh
+# daemon with SQLite (default)
+pc serve
+# -> sqlite at ./pc-events.db, replay via ?since=
+
+# custom path
+pc serve --persist /var/lib/pc/events.db
+PC_PERSIST_PATH=/var/lib/pc/events.db pc serve
+
+# in-memory only (no replay)
+pc serve --no-persist
+cargo install --path bin/pc --no-default-features --features demo
+
+# replay missed events
+curl "http://localhost:8788/api/events?since=42"
+curl "http://localhost:8788/api/events?since=42&limit=100"
+# -> { "events": [{ "cursor": 43, "event": { "jsonrpc":"2.0","method":"event.message", ... }}], "latest_cursor": 120 }
+```
+
+SQLite is an **optional dependency** — only the `pc` binary pulls it (feature `persist`). Library crates stay lean. No system SQLite needed: the crate bundles it (`rusqlite` with `bundled`).
 
 ## Tooling
 
-| Tool            | Version     | How pinned                     |
-| --------------- | ----------- | ------------------------------ |
-| Rust            | `1.97.1`    | `rust-toolchain.toml`          |
-| Bun             | `1.4.0`     | `packageManager` + `mise.toml` |
-| Node (fallback) | `22.22.2`   | `mise.toml` + `engines.node`   |
-| TypeScript      | `7.0.2`     | `package.json#devDependencies` |
-| oxlint / oxfmt  | `1.80/0.65` | `package.json#devDependencies` |
+| Tool | Version | Pinned by |
+| ---- | ------- | --------- |
+| Rust | `1.97.1` | `rust-toolchain.toml` |
+| Bun | `1.4.0` | `packageManager` + `mise.toml` |
+| TypeScript | `7.0.2` | `package.json` |
+| oxlint / oxfmt | `1.80/0.65` | `package.json` |
 
 ```sh
-mise install         # installs Rust + Bun + Node
-bun install          # installs JS deps (writes bun.lockb)
-bun run lint         # oxlint --type-aware .
-bun run format       # oxfmt --check .
-bun run typecheck    # tsc -p <each tsconfig> --noEmit
-cargo test           # Rust tests
+mise install         # Rust + Bun + Node
+bun install
+bun run lint && bun run format && bun run typecheck
+cargo test
 ```
-
-Config files: [`.oxlintrc.json`](.oxlintrc.json), [`.oxfmtrc.json`](.oxfmtrc.json).
 
 ## Limitations
 
-- WhatsApp/Slack/Signal/Matrix not yet implemented (hand-rolled on `reqwest` + `tokio-tungstenite` per architecture).
-- `pc serve` persistence is in-memory only (no sqlite at-least-once replay yet; see `docs/phases/08-ffi-daemon.md`).
-- `pc.config.ts` `defineConfig` helper is a type stub; Rust loader reads JSON.
+- WhatsApp / Slack / Signal / Matrix not yet implemented (planned: hand-rolled on `reqwest` + `tokio-tungstenite`).
+- `pc.config.ts` `defineConfig` is a type stub; Rust loader reads JSON.
+- SQLite replay is daemon-only (`pc serve`). Stdio sidecar stays in-memory.
 
 ## Architecture
 
