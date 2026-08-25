@@ -25,7 +25,7 @@ Two binaries (`bin/pc` stdio sidecar + `cli/` standalone workspace at `cli/Cargo
 
 - `pc --help` shows subcommands; `pc send` / `pc listen` replace `pc-connect send/listen`.
 - No duplicated `build_provider`; single `provider-config` crate (Phase 03) is sole config entry.
-- Existing `opencode-plugin/src/pc-client.ts:82` `PcClient.start(bin)` still works (`bin = "pc"` with no args = sidecar).
+- Existing `plugins/opencode-plugin/src/pc-client.ts:82` `PcClient.start(bin)` still works (`bin = "pc"` with no args = sidecar).
 
 ## Files
 

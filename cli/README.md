@@ -166,9 +166,9 @@ any dependency change.
 
 Sibling agents in this repo build on the same provider-connect contract:
 
-* [`opencode-plugin/`](../opencode-plugin/) — OpenCode plugin
-* [`pi-plugin/`](../pi-plugin/) — Prime Intellect agent plugin
-* [`agent-skill/`](../agent-skill/) — agent skill
+* [`plugins/opencode-plugin/`](../plugins/opencode-plugin/) — OpenCode plugin
+* [`plugins/pi-plugin/`](../plugins/pi-plugin/) — Prime Intellect agent plugin
+* [`plugins/agent-skill/`](../plugins/agent-skill/) — agent skill
 
 They are owned by their respective agents; this CLI only documents the
 interface they share (`send` / `listen` / `check` above).

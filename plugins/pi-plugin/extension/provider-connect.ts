@@ -38,7 +38,7 @@ function resolvePcBinary(): string {
   if (envBin) return envBin;
   const candidates: string[] = [];
   // Repo-relative lookup works when the extension runs from the repo
-  // (pi-plugin/extension/provider-connect.ts -> <repo>/target/...).
+  // (plugins/pi-plugin/extension/provider-connect.ts -> <repo>/target/...).
   let here: string | undefined;
   try {
     here = path.dirname(fileURLToPath(import.meta.url));

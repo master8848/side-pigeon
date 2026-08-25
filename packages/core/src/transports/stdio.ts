@@ -1,6 +1,6 @@
 /**
  * stdio transport — spawns the `pc` sidecar over NDJSON (JSON-RPC 2.0).
- * Mirrors `opencode-plugin/src/pc-client.ts:111` PcClient.start.
+ * Mirrors `plugins/opencode-plugin/src/pc-client.ts:111` PcClient.start.
  */
 
 import { spawn } from "node:child_process";

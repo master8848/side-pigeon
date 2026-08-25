@@ -173,7 +173,7 @@ lockfile is committed.
   gateway events are not replayed. This is a real data-loss window.
 - **For reliable background receiving, use the out-of-process siblings**:
   - [`cli/`](../cli/) — the `pc-connect` CLI (spawn, send, bounded poll).
-  - [`agent-skill/`](../agent-skill/) — the `pc-msg` skill/CLI for agents:
+  - [`plugins/agent-skill/`](../plugins/agent-skill/) — the `pc-msg` skill/CLI for agents:
     zero-dependency Python, spawns the sidecar per command, maps chat ids to
     agent sessions, and can hand messages to `opencode run --session` /
     `prime-agent send`.
@@ -205,7 +205,7 @@ lockfile is committed.
 ## Layout
 
 ```
-opencode-plugin/
+plugins/opencode-plugin/
 ├── src/
 │   ├── index.ts          # plugin entrypoint ({ id, server } module)
 │   ├── client-adapter.ts # SDK client → minimal runtime client

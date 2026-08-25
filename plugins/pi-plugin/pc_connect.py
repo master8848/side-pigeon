@@ -74,7 +74,7 @@ def find_pc_binary():
     if env_bin:
         return env_bin
     candidates = []
-    # This file lives at <repo>/pi-plugin/pc_connect.py (or the skill copy at
+    # This file lives at <repo>/plugins/pi-plugin/pc_connect.py (or the skill copy at
     # ~/.prime/agent/skills/provider-connect/); the repo check is best-effort.
     repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     candidates.append(os.path.join(repo, "target", "release", "pc"))

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for the pc_msg skill script (stdlib unittest, no network).
 
-Run:  python3 -m unittest discover -s agent-skill/tests
-  or: python3 agent-skill/tests/test_pc_msg.py
+Run:  python3 -m unittest discover -s plugins/agent-skill/tests
+  or: python3 plugins/agent-skill/tests/test_pc_msg.py
 """
 
 import io

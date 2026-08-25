@@ -108,7 +108,7 @@ export function inlineAttachment(
 }
 
 // ------------------------------------------------------------------
-// Content helpers (port of opencode-plugin/src/format.ts). Extracted here
+// Content helpers (port of plugins/opencode-plugin/src/format.ts). Extracted here
 // so any agent (not just opencode) can render ChannelMessage content.
 // ------------------------------------------------------------------
 

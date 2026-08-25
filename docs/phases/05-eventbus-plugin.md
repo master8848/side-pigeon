@@ -4,7 +4,7 @@
 
 ## Why
 
-`traits.rs:36` `ProviderEvents::on_message(ChannelMessage)` is sync, global, unfilterable, un-unsubscribable. `state.rs:43` `broadcast::Sender<Outbound>` is single global `512` (now `32` from Phase 02) with `Lagged -> dropped_frames_notification`. Policy (`recentIds`/`recentSent` dedup + `ignoreSenderIds` + `rooms` allowlist) lives scattered in `opencode-plugin/src/runtime.ts:77,168` and `pi-plugin/pc_connect.py:654`. TankStack solved this with `query-core` headless + middleware/observer subscriptions.
+`traits.rs:36` `ProviderEvents::on_message(ChannelMessage)` is sync, global, unfilterable, un-unsubscribable. `state.rs:43` `broadcast::Sender<Outbound>` is single global `512` (now `32` from Phase 02) with `Lagged -> dropped_frames_notification`. Policy (`recentIds`/`recentSent` dedup + `ignoreSenderIds` + `rooms` allowlist) lives scattered in `plugins/opencode-plugin/src/runtime.ts:77,168` and `plugins/pi-plugin/pc_connect.py:654`. TankStack solved this with `query-core` headless + middleware/observer subscriptions.
 
 ## Scope
 
@@ -46,7 +46,7 @@
 
 - `client.subscribe({provider:"telegram", explicitlyAddressed:true}, cb) => unsubscribe` typed, filterable, per-subscriber bounded queue (no global loss).
 - Cargo feature = compile gate, `Plugin` = runtime composition (no more forking provider for pacing).
-- Existing `Transport` tests pass via new path; new `provider-core::client::tests::subscribe_filter` + `plugin::tests::allowlist_blocks, dedup_suppresses_replay` (port `opencode-plugin/test/runtime.test.ts` cases).
+- Existing `Transport` tests pass via new path; new `provider-core::client::tests::subscribe_filter` + `plugin::tests::allowlist_blocks, dedup_suppresses_replay` (port `plugins/opencode-plugin/test/runtime.test.ts` cases).
 
 ## Files
 

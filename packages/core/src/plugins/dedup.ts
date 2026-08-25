@@ -1,6 +1,6 @@
 /**
  * dedup plugin — id + echo suppression.
- * Mirrors `opencode-plugin/src/runtime.ts:77` recentIds/recentSent (MAX_RECENT=2000).
+ * Mirrors `plugins/opencode-plugin/src/runtime.ts:77` recentIds/recentSent (MAX_RECENT=2000).
  */
 
 import type { Plugin } from "../provider-client.js";

@@ -18,7 +18,7 @@ the agent process; every command spawns the binary, does one job, and exits.
 
 ## Install
 
-The skill is one folder: `agent-skill/` (this repo). The only moving parts are
+The skill is one folder: `plugins/agent-skill/` (this repo). The only moving parts are
 `pc_msg.py` (the script) and `sessions.json` (your chat→session map).
 
 ### As an opencode agent skill
@@ -29,7 +29,7 @@ opencode agents read markdown through instructions files:
    `~/.config/opencode/AGENTS.md`):
 
    ```md
-   @provider-connect/agent-skill/SKILL.md
+   @provider-connect/plugins/agent-skill/SKILL.md
    ```
 
    (opencode resolves `@path` imports relative to the AGENTS.md location.)
@@ -37,10 +37,10 @@ opencode agents read markdown through instructions files:
    `opencode.json`:
 
    ```json
-   { "instructions": ["/path/to/provider-connect/agent-skill/SKILL.md"] }
+   { "instructions": ["/path/to/provider-connect/plugins/agent-skill/SKILL.md"] }
    ```
 
-2. The agent calls `python3 /path/to/provider-connect/agent-skill/pc_msg.py …`
+2. The agent calls `python3 /path/to/provider-connect/plugins/agent-skill/pc_msg.py …`
    for every messaging action.
 
 ### As a prime agent skill
@@ -52,12 +52,12 @@ opencode agents read markdown through instructions files:
        name="pc-msg",
        kind="markdown",
        description="Lean provider messaging via provider-connect (shell, no plugin).",
-       path="/path/to/provider-connect/agent-skill/SKILL.md",
+       path="/path/to/provider-connect/plugins/agent-skill/SKILL.md",
    )
    ```
 
    or add a prompt note pointing at the file. The skill's `pc_msg.py` runs
-   from the shell: `python3 /path/to/provider-connect/agent-skill/pc_msg.py …`.
+   from the shell: `python3 /path/to/provider-connect/plugins/agent-skill/pc_msg.py …`.
 
 2. The prime in-kernel alternative for receiving: the agent itself calls
    `pc_msg poll …` as a tool, reads the JSON lines in its context, and replies

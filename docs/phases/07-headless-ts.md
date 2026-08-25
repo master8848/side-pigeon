@@ -4,7 +4,7 @@
 
 ## Why
 
-`opencode-plugin/src/pc-client.ts:82` `PcClient` (spawn + `readline` NDJSON + id-matched `pending` + `EventEmitter`) and `opencode-plugin/src/runtime.ts:68` `ProviderConnectRuntime` (dedup at `runtime.ts:77` `recentIds/recentSent`, `SessionMap` at `session-map.ts:28`, `rooms` allowlist) are welded to Opencode's `ClientLike` at `runtime.ts:21`. There are three duplicated NDJSON clients (`pc-client.ts:64`, `examples/node/index.mjs:64`, `pi-plugin` style). The promise is `bun add provider-connect` works for *any* agent (Opencode / Pi / Eliza / custom Node script) in 5 lines.
+`plugins/opencode-plugin/src/pc-client.ts:82` `PcClient` (spawn + `readline` NDJSON + id-matched `pending` + `EventEmitter`) and `plugins/opencode-plugin/src/runtime.ts:68` `ProviderConnectRuntime` (dedup at `runtime.ts:77` `recentIds/recentSent`, `SessionMap` at `session-map.ts:28`, `rooms` allowlist) are welded to Opencode's `ClientLike` at `runtime.ts:21`. There are three duplicated NDJSON clients (`pc-client.ts:64`, `examples/node/index.mjs:64`, `pi-plugin` style). The promise is `bun add provider-connect` works for *any* agent (Opencode / Pi / Eliza / custom Node script) in 5 lines.
 
 ## Scope
 
@@ -28,7 +28,7 @@
 
 ### Opencode as adapter
 
-- `opencode-plugin/src/index.ts:18` `ProviderConnectServer` becomes:
+- `plugins/opencode-plugin/src/index.ts:18` `ProviderConnectServer` becomes:
   ```ts
   import { createProviderClient } from '@provider-connect/core';
   import { opencodeAdapter } from '@provider-connect/opencode';
@@ -52,5 +52,5 @@
 ## Files
 
 - `packages/core/src/{client.ts,index.ts,schema.generated.ts}` (new)
-- `opencode-plugin/src/{pc-client.ts,runtime.ts,index.ts}` refactor to import from `@provider-connect/core`
+- `plugins/opencode-plugin/src/{pc-client.ts,runtime.ts,index.ts}` refactor to import from `@provider-connect/core`
 - `examples/node/index.mjs:64` use shared client

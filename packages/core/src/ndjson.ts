@@ -1,7 +1,7 @@
 /**
  * Shared NDJSON / JSON-RPC line parser.
  *
- * Extracted from `opencode-plugin/src/pc-client.ts:134` `onLine` and
+ * Extracted from `plugins/opencode-plugin/src/pc-client.ts:134` `onLine` and
  * `examples/node/index.mjs:64` `JsonRpcClient`. This is the single
  * implementation; both call sites should converge here.
  *

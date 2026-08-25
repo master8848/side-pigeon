@@ -1,6 +1,6 @@
 /**
  * Headless PcClient — JSON-RPC 2.0 over NDJSON stdio.
- * Extracted from `opencode-plugin/src/pc-client.ts` (82) and `examples/node/index.mjs:64`.
+ * Extracted from `plugins/opencode-plugin/src/pc-client.ts` (82) and `examples/node/index.mjs:64`.
  * No dependency on `@opencode-ai/plugin`; works with Node or Bun.
  */
 

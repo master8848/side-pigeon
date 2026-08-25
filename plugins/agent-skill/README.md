@@ -3,7 +3,7 @@
 A cross-agent **skill** (works for opencode AND prime agent, and any other
 agent that can run shell commands) for lean provider messaging through
 provider-connect. This is the **out-of-process path**: unlike the plugin
-siblings (`opencode-plugin/`, `pi-plugin/`) which run inside Node processes,
+siblings (`plugins/opencode-plugin/`, `plugins/pi-plugin/`) which run inside Node processes,
 this skill installs a tiny Python 3 stdlib CLI and every action spawns the
 provider-connect binary, does one job, and exits. No plugin, no long-running
 in-agent process.
@@ -37,16 +37,16 @@ opencode reads markdown skills through instructions files:
 1. Add the skill to the agent's instructions. In `AGENTS.md`:
 
    ```md
-   @provider-connect/agent-skill/SKILL.md
+   @provider-connect/plugins/agent-skill/SKILL.md
    ```
 
    or in `opencode.json`:
 
    ```json
-   { "instructions": ["/abs/path/to/provider-connect/agent-skill/SKILL.md"] }
+   { "instructions": ["/abs/path/to/provider-connect/plugins/agent-skill/SKILL.md"] }
    ```
 
-2. The agent runs `python3 /abs/path/provider-connect/agent-skill/pc_msg.py …`
+2. The agent runs `python3 /abs/path/provider-connect/plugins/agent-skill/pc_msg.py …`
    for every messaging action. Optionally symlink `pc_msg.py` into `~/bin`.
 
 ### prime agent
@@ -58,7 +58,7 @@ opencode reads markdown skills through instructions files:
        name="pc-msg",
        kind="markdown",
        description="Lean provider messaging via provider-connect (shell, no plugin).",
-       path="/abs/path/to/provider-connect/agent-skill/SKILL.md",
+       path="/abs/path/to/provider-connect/plugins/agent-skill/SKILL.md",
    )
    ```
 
@@ -221,7 +221,7 @@ the sidecar starts providers lazily.
 ## Tests
 
 ```sh
-python3 -m unittest discover -s agent-skill/tests -v
+python3 -m unittest discover -s plugins/agent-skill/tests -v
 # 44 tests: JSON/event parsing, session resolution, handoff construction,
 # mocked subprocess flows for both backends, binary discovery.
 ```
@@ -229,6 +229,6 @@ python3 -m unittest discover -s agent-skill/tests -v
 ## Layout / ownership
 
 This directory is owned by the agent-skill agent. Do not modify
-`opencode-plugin/`, `pi-plugin/`, or `cli/` (owned by their respective
+`plugins/opencode-plugin/`, `plugins/pi-plugin/`, or `cli/` (owned by their respective
 agents). The `pc-connect` contract this skill targets lives in
 `docs/api-contract.md` + `crates/provider-transport/src/{jsonrpc,events}.rs`.

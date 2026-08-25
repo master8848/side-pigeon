@@ -66,7 +66,7 @@ extension runs from the provider-connect checkout).
 
 ### Skill
 
-Copy the whole `pi-plugin/` directory into a skill location:
+Copy the whole `plugins/pi-plugin/` directory into a skill location:
 
 ```bash
 cp -R . ~/.prime/agent/skills/provider-connect/

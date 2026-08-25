@@ -31,7 +31,7 @@ export {
   messageText,
 } from "./schema.js";
 
-// NDJSON / JSON-RPC line parser (shared; see also opencode-plugin/src/pc-client.ts:134)
+// NDJSON / JSON-RPC line parser (shared; see also plugins/opencode-plugin/src/pc-client.ts:134)
 export { parseLine, attachNdjsonReader } from "./ndjson.js";
 export type { ParsedLine, JsonRpcResponse } from "./ndjson.js";
 
