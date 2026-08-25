@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "side-pigeon"
+version = "0.1.0"
+description = "Python binding for provider-ffi cdylib (ctypes ~5us poll) with stdio JSON-RPC fallback"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Saurav Sanjel", email = "master8848@users.noreply.github.com" }]
+keywords = ["ffi", "ctypes", "provider", "sidecar", "telegram", "discord"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest >=7"]
+
+[project.urls]
+Repository = "https://github.com/master8848/side-pigeon"
+
+[tool.hatch.build.targets.wheel]
+packages = ["side_pigeon"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
