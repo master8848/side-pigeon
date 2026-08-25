@@ -12,7 +12,7 @@ stdio = []
 # Optional WebSocket server (tokio-tungstenite). Off by default.
 ws = ["dep:tokio-tungstenite", "dep:futures-util"]
 # Optional minimal HTTP/1.1 server (hand-rolled on hyper). Off by default.
-http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:futures-util"]
 
 [dependencies]
 provider-core = { path = "../provider-core" }
@@ -28,6 +28,7 @@ futures-util = { version = "0.3", optional = true }
 hyper = { version = "1", default-features = false, features = ["server", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

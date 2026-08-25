@@ -9,7 +9,7 @@ description = "Unified schema, capability traits, error types (ported from ZeroC
 default = ["registry"]
 # The feature-gated provider registry. Disable for a lean embed that only
 # needs schema + traits (e.g. provider crates themselves).
-registry = []
+registry = ["dep:tokio"]
 
 [dependencies]
 serde = { workspace = true }
@@ -19,7 +19,8 @@ async-trait = { workspace = true }
 # Wire format: MediaAttachment.data is base64-encoded by the JSON-RPC layer
 # (contract promise). base64 0.22.1 is already in the lockfile (transitive);
 # making it a direct dep pins the wire codec. Published 2024-01-26 (>=14d).
-base64 = "0.22" 
+base64 = "0.22"
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

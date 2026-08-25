@@ -92,12 +92,12 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Serve over WebSocket / HTTP (stub — Phase 06)
+    /// Serve over WebSocket / HTTP (daemon: holds provider connections once, fans out to clients)
     Serve {
-        /// WebSocket listen address (e.g. :8787)
+        /// WebSocket listen address (e.g. :8787 or 127.0.0.1:8787)
         #[arg(long, value_name = "ADDR")]
         ws: Option<String>,
-        /// HTTP listen address (e.g. :8788)
+        /// HTTP listen address (e.g. :8788 or 127.0.0.1:8788)
         #[arg(long, value_name = "ADDR")]
         http: Option<String>,
     },
@@ -144,10 +144,7 @@ fn main() -> ExitCode {
             json,
             config: config_path,
         }),
-        Some(Commands::Serve { ws: _, http: _ }) => {
-            println!("serve not yet implemented");
-            ExitCode::SUCCESS
-        }
+        Some(Commands::Serve { ws, http }) => run_serve(config_path, ws, http),
         Some(Commands::Init) => {
             println!("pc init: scaffold not yet implemented — create a JSON config with {{\"providers\":[{{\"id\":\"demo\"}}]}} or set PC_PROVIDERS env");
             ExitCode::SUCCESS
@@ -255,7 +252,14 @@ fn build_app_state(
     config: &provider_config::SidecarConfig,
     transport: &str,
 ) -> Result<(AppState, broadcast::Sender<Outbound>), String> {
-    let (mut state, notify_tx) = AppState::new(transport);
+    build_app_state_with_transports(config, vec![transport.to_string()])
+}
+
+fn build_app_state_with_transports(
+    config: &provider_config::SidecarConfig,
+    transports: Vec<String>,
+) -> Result<(AppState, broadcast::Sender<Outbound>), String> {
+    let (mut state, notify_tx) = AppState::new_with_transports(transports);
     let events = state.events();
     register_providers(config, state.registry_mut(), &events).map_err(|e| e)?;
     drop(events);
@@ -953,3 +957,125 @@ fn available_providers() -> Vec<&'static str> {
     ids.extend(["discord"]);
     ids
 }
+
+// ---------------------------------------------------------------------------
+// pc serve (Phase 06): bod server — HTTP + WS daemon
+// ---------------------------------------------------------------------------
+
+fn parse_listen_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
+    let s = if raw.starts_with(':') {
+        format!("0.0.0.0{raw}")
+    } else {
+        raw.to_string()
+    };
+    s.parse::<std::net::SocketAddr>()
+        .map_err(|e| format!("invalid listen addr {raw:?}: {e} (try :8788 or 127.0.0.1:8788)"))
+}
+
+fn run_serve(
+    config_path: Option<String>,
+    ws: Option<String>,
+    http: Option<String>,
+) -> ExitCode {
+    init_tracing();
+    let (ws_addr, http_addr) = match (ws, http) {
+        (None, None) => (Some(":8787".to_string()), Some(":8788".to_string())),
+        (w, h) => (w, h),
+    };
+    let config = match provider_config::load(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("pc: failed to load config: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut transports: Vec<String> = Vec::new();
+    if ws_addr.is_some() { transports.push("ws".to_string()); }
+    if http_addr.is_some() { transports.push("http".to_string()); }
+    if !transports.contains(&"stdio".to_string()) { transports.push("stdio".to_string()); }
+    let (state, notify_tx) = match build_app_state_with_transports(&config, transports) {
+        Ok(v) => v,
+        Err(e) => { eprintln!("pc: {e}"); return ExitCode::FAILURE; }
+    };
+    tracing::info!(providers = ?state.registry().ids(), "providers registered for serve");
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => { eprintln!("pc: failed to build tokio runtime: {e}"); return ExitCode::FAILURE; }
+    };
+    let state = std::sync::Arc::new(tokio::sync::Mutex::new(state));
+    #[cfg(feature = "ws")]
+    let notify_for_ws = notify_tx.clone();
+    #[cfg(not(feature = "ws"))]
+    let _notify_for_ws = notify_tx.clone();
+    let result: Result<(), String> = runtime.block_on(async move {
+        let http_listener: Option<tokio::net::TcpListener> = match http_addr {
+            Some(raw) => {
+                let addr = parse_listen_addr(&raw).map_err(|e| e)?;
+                let l = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind http {raw}: {e}"))?;
+                tracing::info!(addr = %l.local_addr().map_err(|e| e.to_string())?, "http listening");
+                Some(l)
+            }
+            None => None,
+        };
+        let ws_listener: Option<tokio::net::TcpListener> = match ws_addr {
+            Some(raw) => {
+                let addr = parse_listen_addr(&raw).map_err(|e| e)?;
+                let l = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind ws {raw}: {e}"))?;
+                tracing::info!(addr = %l.local_addr().map_err(|e| e.to_string())?, "ws listening");
+                Some(l)
+            }
+            None => None,
+        };
+        if http_listener.is_none() && ws_listener.is_none() {
+            return Err("pc serve: no listeners (pass --http or --ws)".to_string());
+        }
+        let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        if let Some(listener) = http_listener {
+            #[cfg(feature = "http")]
+            {
+                let state = state.clone();
+                handles.push(tokio::spawn(async move {
+                    if let Err(e) = provider_transport::http::serve_http(state, listener).await {
+                        tracing::error!(error = %e, "http server exited");
+                    }
+                }));
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (state.clone(), listener);
+                return Err("http requested but pc was built without --features http".to_string());
+            }
+        }
+        if let Some(listener) = ws_listener {
+            #[cfg(feature = "ws")]
+            {
+                let state = state.clone();
+                let notify_tx = notify_for_ws.clone();
+                handles.push(tokio::spawn(async move {
+                    if let Err(e) = provider_transport::ws::serve_ws(state, notify_tx, listener).await {
+                        tracing::error!(error = %e, "ws server exited");
+                    }
+                }));
+            }
+            #[cfg(not(feature = "ws"))]
+            {
+                let _ = (state.clone(), listener);
+                return Err("ws requested but pc was built without --features ws".to_string());
+            }
+        }
+        tracing::info!("pc serve ready (Ctrl-C to stop)");
+        tokio::signal::ctrl_c().await.map_err(|e| format!("signal error: {e}"))?;
+        tracing::info!("pc serve shutting down");
+        for h in handles { h.abort(); }
+        let mut guard = state.lock().await;
+        if let Err(e) = guard.registry_mut().stop_all().await {
+            tracing::warn!(error = %e, "error stopping providers on serve shutdown");
+        }
+        Ok(())
+    });
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => { eprintln!("pc serve: {e}"); ExitCode::FAILURE }
+    }
+}
+

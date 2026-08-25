@@ -18,6 +18,9 @@ demo = []
 # listing it in the config's "providers" array.
 telegram = ["dep:provider-telegram"]
 discord = ["dep:provider-discord"]
+# Optional transports for `pc serve` (lean sidecar stays stdio-only by default).
+http = ["provider-transport/http"]
+ws = ["provider-transport/ws"]
 
 [dependencies]
 provider-core = { path = "../../crates/provider-core" }

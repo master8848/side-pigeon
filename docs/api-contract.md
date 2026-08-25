@@ -50,3 +50,12 @@ pub enum ProviderError {
 ```
 
 JSON-RPC method surface (transport, ACP-style): requests `initialize`, `capabilities`, `listen` (start providers), `send`, `shutdown`; server->client notifications `event.message` (ChannelMessage as JSON), `event.draft`, `event.choice`, `event.error`.
+
+HTTP surface (feature `http`, `pc serve --http :8788 --ws :8787` — Phase 06, bod server):
+```
+GET  /health                     -> capabilities_value() (k8s / pc check; no JSON-RPC handshake)
+POST /api/providers/:id/send     -> typed SendMessage JSON -> SendReceipt (Next-like Route Handler)
+GET  /api/events                 -> SSE fan-out of broadcast::Sender<Outbound> (event.message / event.error)
+POST /rpc                        -> JSON-RPC dispatch (same handle_request as stdio/WS)
+```
+Stdio remains the default (`pc` / `pc sidecar`); HTTP/WS are opt-in via `pc serve` and feature-gated so the idle sidecar stays lean. Registry `start_all` is parallelized with `JoinSet` + per-provider startup jitter.

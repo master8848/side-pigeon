@@ -123,20 +123,77 @@ impl ProviderRegistry {
     /// Start every registered provider. Attempts all of them and returns the
     /// ids that started; if any failed, the first error is returned (already
     /// started ones are left running).
+    ///
+    /// Provider starts run concurrently via `JoinSet` so N providers do not
+    /// pay N× startup latency (see Phase 06: bod server fans out once).
+    /// Each start is jittered with a tiny deterministic delay to avoid
+    /// thundering herds on restart without pulling `rand` into the lean core.
     pub async fn start_all(&mut self) -> Result<Vec<String>, ProviderError> {
-        let ids: Vec<String> = self.providers.iter().map(|p| p.id().to_string()).collect();
-        let mut started = Vec::new();
+        // Drain providers that still need starting so each `Box<dyn ChatProvider>`
+        // can be moved into its own task (required for `&mut self` start).
+        let mut to_start: Vec<Box<dyn ChatProvider>> = Vec::new();
+        let mut remain: Vec<Box<dyn ChatProvider>> = Vec::new();
+        for p in self.providers.drain(..) {
+            if self.started.contains(p.id()) {
+                remain.push(p);
+            } else {
+                to_start.push(p);
+            }
+        }
+        self.providers.append(&mut remain);
+
+        if to_start.is_empty() {
+            return Ok(self.started_ids());
+        }
+
+        // SAFETY: `registry` feature implies `tokio` dep is present (see Cargo.toml).
+        let mut set: tokio::task::JoinSet<(
+            Box<dyn ChatProvider>,
+            String,
+            Result<(), ProviderError>,
+        )> = tokio::task::JoinSet::new();
+        for mut provider in to_start {
+            let id_clone = provider.id().to_string();
+            set.spawn(async move {
+                let jitter = {
+                    let mut x: u64 = 14695981039346656037;
+                    for b in id_clone.as_bytes() {
+                        x ^= *b as u64;
+                        x = x.wrapping_mul(1099511628211);
+                    }
+                    x % 50
+                };
+                tokio::time::sleep(std::time::Duration::from_millis(jitter)).await;
+                let res = provider.start().await;
+                (provider, id_clone, res)
+            });
+        }
+
+        let mut started: Vec<String> = Vec::new();
         let mut first_error: Option<ProviderError> = None;
-        for id in &ids {
-            match self.start(id).await {
-                Ok(()) => started.push(id.clone()),
-                Err(e) => {
+        while let Some(join) = set.join_next().await {
+            match join {
+                Ok((provider, id, Ok(()))) => {
+                    self.started.insert(id.clone());
+                    started.push(id);
+                    self.providers.push(provider);
+                }
+                Ok((provider, _id, Err(e))) => {
                     if first_error.is_none() {
                         first_error = Some(e);
+                    }
+                    self.providers.push(provider);
+                }
+                Err(e) => {
+                    if first_error.is_none() {
+                        first_error = Some(ProviderError::Other(format!(
+                            "provider start panicked: {e}"
+                        )));
                     }
                 }
             }
         }
+        started.sort();
         match first_error {
             Some(e) => Err(e),
             None => Ok(started),
