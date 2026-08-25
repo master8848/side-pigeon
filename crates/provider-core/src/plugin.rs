@@ -44,23 +44,56 @@ pub trait Plugin: Send + Sync {
     fn on_error(&self, _provider: &str, _err: &ProviderError) {}
 }
 
+/// Default dedup window (5 minutes).
+pub const DEFAULT_DEDUP_WINDOW: Duration = Duration::from_secs(300);
+/// Maximum entries in the dedup cache (TTL-bounded LRU).
+pub const DEDUP_MAX_ENTRIES: usize = 2000;
+
 /// De-duplicate inbound messages by `(channel, id)` within a sliding window.
 ///
 /// A message whose `id` was seen less than `window` ago is dropped. The
-/// cache is bounded by expiring entries older than `window`.
+/// cache is bounded by:
+/// 1. TTL expiry — entries older than `window` are evicted on every insert
+///    (`retain`).
+/// 2. LRU capacity — at most [`DEDUP_MAX_ENTRIES`] (default 2000) keys are
+///    retained; when full the oldest entry (by `Instant`) is evicted on insert
+///    (simple TTL-bounded LRU without an extra crate).
+///
+/// `window` is configurable; default is 5 minutes via [`Default`] / [`DEFAULT_DEDUP_WINDOW`].
+/// Callers should revalidate after `send` (outbound `SendMessage` is not
+/// deduped — only inbound `ChannelMessage` — so a reflected echo that arrives
+/// after your own send will be correctly suppressed within the window).
 pub struct DedupPlugin {
     /// Deduplication window.
     pub window: Duration,
+    /// Maximum number of keys to retain.
+    pub max_entries: usize,
     cache: Mutex<HashMap<String, Instant>>,
 }
 
 impl DedupPlugin {
-    /// Create a dedup plugin with the given window.
+    /// Create a dedup plugin with the given window (capacity = [`DEDUP_MAX_ENTRIES`]).
     pub fn new(window: Duration) -> Self {
         DedupPlugin {
             window,
+            max_entries: DEDUP_MAX_ENTRIES,
             cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Create a dedup plugin with explicit window and capacity.
+    pub fn with_capacity(window: Duration, max_entries: usize) -> Self {
+        DedupPlugin {
+            window,
+            max_entries: max_entries.max(1),
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl Default for DedupPlugin {
+    fn default() -> Self {
+        Self::new(DEFAULT_DEDUP_WINDOW)
     }
 }
 
@@ -68,12 +101,40 @@ impl Plugin for DedupPlugin {
     fn on_message(&self, msg: &mut ChannelMessage) -> ControlFlow {
         let key = format!("{}:{}", msg.channel, msg.id);
         let now = Instant::now();
-        let mut cache = self.cache.lock().unwrap();
-        // Evict expired entries to bound memory.
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // 1) TTL expiry: drop entries older than window to bound memory.
         cache.retain(|_, t| now.duration_since(*t) < self.window);
+        // 2) Dedup check.
         if let Some(last) = cache.get(&key) {
             if now.duration_since(*last) < self.window {
                 return ControlFlow::Drop;
+            }
+        }
+        // 3) Capacity (LRU): evict oldest if at capacity before insert.
+        if cache.len() >= self.max_entries {
+            // Find oldest entry by Instant (simple LRU approximation).
+            if let Some(oldest_key) = cache
+                .iter()
+                .min_by_key(|(_, t)| *t)
+                .map(|(k, _)| k.clone())
+            {
+                cache.remove(&oldest_key);
+            } else {
+                // Fallback: remove arbitrary entry if min search fails.
+                if let Some(k) = cache.keys().next().cloned() {
+                    cache.remove(&k);
+                }
+            }
+            // If still at capacity (should not happen), prune one more iteratively.
+            while cache.len() >= self.max_entries {
+                if let Some(k) = cache.keys().next().cloned() {
+                    cache.remove(&k);
+                } else {
+                    break;
+                }
             }
         }
         cache.insert(key, now);
@@ -226,5 +287,32 @@ mod tests {
         };
         assert_eq!(plugin.on_message(&mut a), ControlFlow::Continue);
         assert_eq!(plugin.on_message(&mut b), ControlFlow::Continue);
+    }
+
+    #[test]
+    fn dedup_lru_capacity_bounded() {
+        // Small capacity to exercise eviction deterministically.
+        let plugin = DedupPlugin::with_capacity(Duration::from_secs(60), 3);
+        for i in 0..3 {
+            let mut m = msg(&format!("id-{i}"), "room");
+            assert_eq!(plugin.on_message(&mut m), ControlFlow::Continue);
+        }
+        // 4th unique id forces eviction of oldest (id-0).
+        let mut m3 = msg("id-3", "room");
+        assert_eq!(plugin.on_message(&mut m3), ControlFlow::Continue);
+        // id-0 was evicted, so replay should now be treated as new.
+        let mut replay_evicted = msg("id-0", "room");
+        assert_eq!(plugin.on_message(&mut replay_evicted), ControlFlow::Continue);
+        // id-1 should still be deduped if not evicted (depends on min_by_key order;
+        // at least one of id-1/id-2 must still be present). We assert size invariant:
+        let cache = plugin.cache.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(cache.len() <= 3, "cache bounded to max_entries");
+    }
+
+    #[test]
+    fn dedup_default_window_is_5min() {
+        let plugin = DedupPlugin::default();
+        assert_eq!(plugin.window, Duration::from_secs(300));
+        assert_eq!(plugin.max_entries, DEDUP_MAX_ENTRIES);
     }
 }

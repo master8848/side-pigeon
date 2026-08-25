@@ -114,8 +114,8 @@ impl Default for EventBus {
 
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let subs = self.inner.subscribers.lock().unwrap().len();
-        let plugins = self.inner.plugins.lock().unwrap().len();
+        let subs = self.inner.subscribers.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let plugins = self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner()).len();
         f.debug_struct("EventBus")
             .field("subscribers", &subs)
             .field("plugins", &plugins)
@@ -137,17 +137,17 @@ impl EventBus {
 
     /// Push a plugin to the end of the chain.
     pub fn use_plugin<P: Plugin + 'static>(&self, plugin: P) {
-        self.inner.plugins.lock().unwrap().push(Box::new(plugin));
+        self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner()).push(Box::new(plugin));
     }
 
     /// Number of plugins (for tests / diagnostics).
     pub fn plugin_count(&self) -> usize {
-        self.inner.plugins.lock().unwrap().len()
+        self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Number of active subscriptions.
     pub fn subscriber_count(&self) -> usize {
-        self.inner.subscribers.lock().unwrap().len()
+        self.inner.subscribers.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Publish one message: run `on_message` plugins in order, then fan out
@@ -165,7 +165,7 @@ impl EventBus {
     pub fn publish_filtered(&self, mut msg: ChannelMessage) -> Option<(ControlFlow, ChannelMessage)> {
         let mut final_flow = ControlFlow::Continue;
         {
-            let plugins = self.inner.plugins.lock().unwrap();
+            let plugins = self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner());
             for p in plugins.iter() {
                 match p.on_message(&mut msg) {
                     ControlFlow::Continue => {}
@@ -177,7 +177,7 @@ impl EventBus {
         // Collect matching callbacks without holding the subscriber lock
         // while invoking (a callback may subscribe/unsubscribe).
         let callbacks: Vec<Callback> = {
-            let subs = self.inner.subscribers.lock().unwrap();
+            let subs = self.inner.subscribers.lock().unwrap_or_else(|e| e.into_inner());
             subs.iter()
                 .filter(|s| s.filter.matches(&msg))
                 .map(|s| s.cb.clone())
@@ -194,7 +194,7 @@ impl EventBus {
     /// `Rewrite`.
     pub fn filter_send(&self, msg: &mut SendMessage) -> ControlFlow {
         let mut final_flow = ControlFlow::Continue;
-        let plugins = self.inner.plugins.lock().unwrap();
+        let plugins = self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner());
         for p in plugins.iter() {
             match p.on_send(msg) {
                 ControlFlow::Continue => {}
@@ -207,7 +207,7 @@ impl EventBus {
 
     /// Notify plugins of an async error (fan-out, no filtering).
     pub fn publish_error(&self, provider: &str, err: &ProviderError) {
-        let plugins = self.inner.plugins.lock().unwrap();
+        let plugins = self.inner.plugins.lock().unwrap_or_else(|e| e.into_inner());
         for p in plugins.iter() {
             p.on_error(provider, err);
         }
@@ -222,12 +222,12 @@ impl EventBus {
     {
         let cb: Callback = Arc::new(cb);
         let id = {
-            let mut next = self.inner.next_id.lock().unwrap();
+            let mut next = self.inner.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *next;
             *next += 1;
             id
         };
-        self.inner.subscribers.lock().unwrap().push(Subscriber {
+        self.inner.subscribers.lock().unwrap_or_else(|e| e.into_inner()).push(Subscriber {
             id,
             filter,
             cb,
@@ -267,7 +267,7 @@ impl Subscription {
     /// also unsubscribes (via [`Drop`]).
     pub fn unsubscribe(mut self) {
         if let Some(inner) = self.inner.take() {
-            inner.subscribers.lock().unwrap().retain(|s| s.id != self.id);
+            inner.subscribers.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s.id != self.id);
         }
         // prevent Drop from double-removing (inner is now None)
     }
@@ -281,7 +281,7 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
-            inner.subscribers.lock().unwrap().retain(|s| s.id != self.id);
+            inner.subscribers.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s.id != self.id);
         }
     }
 }
@@ -472,12 +472,12 @@ mod tests {
                 channel_id: None,
                 explicitly_addressed: Some(true),
             },
-            move |m| seen2.lock().unwrap().push(m.id.clone()),
+            move |m| seen2.lock().unwrap_or_else(|e| e.into_inner()).push(m.id.clone()),
         );
         bus.publish(msg("1", "telegram", "room", true));
         bus.publish(msg("2", "telegram", "room", false));
         bus.publish(msg("3", "discord", "room", true));
-        let ids = seen.lock().unwrap().clone();
+        let ids = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
         assert_eq!(ids, vec!["1"]);
     }
 
@@ -487,13 +487,13 @@ mod tests {
         let seen = Arc::new(Mutex::new(0usize));
         let seen2 = seen.clone();
         let sub = bus.subscribe(EventFilter::default(), move |_| {
-            *seen2.lock().unwrap() += 1;
+            *seen2.lock().unwrap_or_else(|e| e.into_inner()) += 1;
         });
         bus.publish(msg("1", "telegram", "room", false));
-        assert_eq!(*seen.lock().unwrap(), 1);
+        assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), 1);
         sub.unsubscribe();
         bus.publish(msg("2", "telegram", "room", false));
-        assert_eq!(*seen.lock().unwrap(), 1, "should not receive after unsubscribe");
+        assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), 1, "should not receive after unsubscribe");
     }
 
     #[test]
@@ -503,13 +503,13 @@ mod tests {
         let seen2 = seen.clone();
         {
             let _sub = bus.subscribe(EventFilter::default(), move |_| {
-                *seen2.lock().unwrap() += 1;
+                *seen2.lock().unwrap_or_else(|e| e.into_inner()) += 1;
             });
             bus.publish(msg("1", "x", "room", false));
-            assert_eq!(*seen.lock().unwrap(), 1);
+            assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), 1);
         }
         bus.publish(msg("2", "x", "room", false));
-        assert_eq!(*seen.lock().unwrap(), 1);
+        assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), 1);
     }
 
     #[test]
@@ -520,11 +520,11 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen2 = seen.clone();
         let _sub = bus.subscribe(EventFilter::default(), move |m| {
-            seen2.lock().unwrap().push(m.channel_id.clone());
+            seen2.lock().unwrap_or_else(|e| e.into_inner()).push(m.channel_id.clone());
         });
         bus.publish(msg("1", "test", "room-a", false));
         bus.publish(msg("2", "test", "room-b", false));
-        assert_eq!(*seen.lock().unwrap(), vec!["room-a"]);
+        assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), vec!["room-a"]);
     }
 
     #[test]
@@ -536,11 +536,11 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen2 = seen.clone();
         let _sub = bus.subscribe(EventFilter::default(), move |m| {
-            seen2.lock().unwrap().push(m.id.clone());
+            seen2.lock().unwrap_or_else(|e| e.into_inner()).push(m.id.clone());
         });
         bus.publish(msg("dup", "test", "room", false));
         bus.publish(msg("dup", "test", "room", false));
         bus.publish(msg("other", "test", "room", false));
-        assert_eq!(*seen.lock().unwrap(), vec!["dup", "other"]);
+        assert_eq!(*seen.lock().unwrap_or_else(|e| e.into_inner()), vec!["dup", "other"]);
     }
 }
