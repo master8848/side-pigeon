@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 # Built-in echo provider for local testing / demos (no network needed).
-default = ["demo"]
+default = ["demo", "persist"]
 demo = []
 # Real providers are compile-time feature-gated (compile-time pruning, per
 # docs/architecture.md §7.1.5). Wire a provider by enabling its feature AND
@@ -21,6 +21,9 @@ discord = ["dep:provider-discord"]
 # Optional transports for `pc serve` (lean sidecar stays stdio-only by default).
 http = ["provider-transport/http"]
 ws = ["provider-transport/ws"]
+# Durable at-least-once log for `pc serve` (WAL sqlite). Opt-out with
+# `--no-default-features` for a lean embed with no sqlite.
+persist = ["provider-transport/persist"]
 
 [dependencies]
 provider-core = { path = "../../crates/provider-core" }

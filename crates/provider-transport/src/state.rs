@@ -11,6 +11,8 @@ use tokio::sync::broadcast;
 
 use crate::events::{EVENT_ERROR, EVENT_MESSAGE};
 use crate::jsonrpc::{JsonRpcError, Notification, Request, Response, JSONRPC_VERSION};
+#[cfg(feature = "persist")]
+use crate::persist::EventLog;
 
 /// Broadcast channel capacity for outgoing frames (responses + notifications).
 /// Sized for chat-rate traffic (not 512 ~512 KB idle overhead per connection).
@@ -45,6 +47,8 @@ pub struct AppState {
     notify: broadcast::Sender<Outbound>,
     shutdown: bool,
     event_bus: Option<EventBus>,
+    #[cfg(feature = "persist")]
+    persist: Option<std::sync::Arc<crate::persist::EventLog>>,
 }
 
 impl AppState {
@@ -64,7 +68,11 @@ impl AppState {
             transports
         };
         let (tx, _rx) = broadcast::channel(OUTBOUND_CAPACITY);
-        let events: Arc<dyn ProviderEvents> = Arc::new(NotifyEvents { tx: tx.clone() });
+        let events: Arc<dyn ProviderEvents> = Arc::new(NotifyEvents {
+            tx: tx.clone(),
+            #[cfg(feature = "persist")]
+            persist: None,
+        });
         let state = AppState {
             protocol_version: env!("CARGO_PKG_VERSION").to_string(),
             transport: transports,
@@ -72,8 +80,35 @@ impl AppState {
             notify: tx.clone(),
             shutdown: false,
             event_bus: None,
+            #[cfg(feature = "persist")]
+            persist: None,
         };
         (state, tx)
+    }
+
+    /// Enable SQLite persistence at `path` (feature `persist` only). Every
+    /// `event.message` / `event.error` is appended; `GET /api/events?since=c`
+    /// replays. No-op when built without `persist`.
+    #[cfg(feature = "persist")]
+    pub fn with_persist(mut self, path: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        let log = std::sync::Arc::new(crate::persist::EventLog::open(path)?);
+        let tx = self.notify.clone();
+        let persist = log.clone();
+        // Re-wire the events sink to include the log
+        let events: Arc<dyn ProviderEvents> = if let Some(bus) = self.event_bus.clone() {
+            Arc::new(BridgeEvents { tx, bus, persist: Some(persist.clone()) })
+        } else {
+            Arc::new(NotifyEvents { tx, persist: Some(persist.clone()) })
+        };
+        self.registry.set_events(events);
+        self.persist = Some(log);
+        Ok(self)
+    }
+
+    /// Borrow the persist log, if enabled.
+    #[cfg(feature = "persist")]
+    pub fn persist(&self) -> Option<std::sync::Arc<crate::persist::EventLog>> {
+        self.persist.clone()
     }
 
     /// Append an additional transport to the advertised capabilities (builder-style).
@@ -94,7 +129,14 @@ impl AppState {
     /// message. The JSON-RPC wire is unchanged.
     pub fn with_event_bus(mut self, bus: EventBus) -> Self {
         let tx = self.notify.clone();
-        let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents { tx, bus: bus.clone() });
+        #[cfg(feature = "persist")]
+        let persist = self.persist.clone();
+        let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents {
+            tx,
+            bus: bus.clone(),
+            #[cfg(feature = "persist")]
+            persist,
+        });
         self.registry.set_events(bridge);
         self.event_bus = Some(bus);
         self
@@ -112,7 +154,14 @@ impl AppState {
         if self.event_bus.is_none() {
             let bus = EventBus::new();
             let tx = self.notify.clone();
-            let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents { tx, bus: bus.clone() });
+            #[cfg(feature = "persist")]
+            let persist = self.persist.clone();
+            let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents {
+                tx,
+                bus: bus.clone(),
+                #[cfg(feature = "persist")]
+                persist,
+            });
             self.registry.set_events(bridge);
             self.event_bus = Some(bus);
         }
@@ -201,6 +250,12 @@ impl AppState {
     /// The self-describing capabilities object returned by `initialize` and
     /// `capabilities`.
     pub fn capabilities_value(&self) -> Value {
+        #[cfg_attr(not(feature = "persist"), allow(unused_mut))]
+        let mut features = vec!["send"];
+        #[cfg(feature = "persist")]
+        if self.persist.is_some() {
+            features.push("persist");
+        }
         json!({
             "protocolVersion": self.protocol_version,
             "methods": ["initialize", "capabilities", "listen", "send", "shutdown"],
@@ -208,7 +263,7 @@ impl AppState {
             // reserved vocabulary but not implemented, so they must not be
             // advertised (the contract must not lie to clients).
             "notifications": [EVENT_MESSAGE, EVENT_ERROR],
-            "features": ["send"],
+            "features": features,
             "transport": self.transport,
             "providers": self.registry.ids(),
         })
@@ -297,11 +352,19 @@ pub fn provider_error(e: ProviderError) -> JsonRpcError {
 /// sync); broadcast send never blocks.
 struct NotifyEvents {
     tx: broadcast::Sender<Outbound>,
+    #[cfg(feature = "persist")]
+    persist: Option<std::sync::Arc<EventLog>>,
 }
 
 impl ProviderEvents for NotifyEvents {
     fn on_message(&self, msg: ChannelMessage) {
         let notification = Notification::message(&msg);
+        #[cfg(feature = "persist")]
+        if let Some(log) = &self.persist {
+            if let Err(e) = log.append(&notification) {
+                tracing::warn!(error = %e, "persist append event.message failed");
+            }
+        }
         if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
             tracing::debug!(error = %err, "dropping event.message (no receivers)");
         }
@@ -309,6 +372,12 @@ impl ProviderEvents for NotifyEvents {
 
     fn on_error(&self, provider: &str, error: &ProviderError) {
         let notification = error_notification(provider, error);
+        #[cfg(feature = "persist")]
+        if let Some(log) = &self.persist {
+            if let Err(e) = log.append(&notification) {
+                tracing::warn!(error = %e, "persist append event.error failed");
+            }
+        }
         if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
             tracing::debug!(error = %err, "dropping event.error (no receivers)");
         }
@@ -324,6 +393,8 @@ impl ProviderEvents for NotifyEvents {
 struct BridgeEvents {
     tx: broadcast::Sender<Outbound>,
     bus: EventBus,
+    #[cfg(feature = "persist")]
+    persist: Option<std::sync::Arc<EventLog>>,
 }
 
 impl ProviderEvents for BridgeEvents {
@@ -332,6 +403,12 @@ impl ProviderEvents for BridgeEvents {
             return;
         };
         let notification = Notification::message(&filtered);
+        #[cfg(feature = "persist")]
+        if let Some(log) = &self.persist {
+            if let Err(e) = log.append(&notification) {
+                tracing::warn!(error = %e, "persist append event.message failed");
+            }
+        }
         if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
             tracing::debug!(error = %err, "dropping event.message (no receivers)");
         }
@@ -340,6 +417,12 @@ impl ProviderEvents for BridgeEvents {
     fn on_error(&self, provider: &str, error: &ProviderError) {
         self.bus.publish_error(provider, error);
         let notification = error_notification(provider, error);
+        #[cfg(feature = "persist")]
+        if let Some(log) = &self.persist {
+            if let Err(e) = log.append(&notification) {
+                tracing::warn!(error = %e, "persist append event.error failed");
+            }
+        }
         if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
             tracing::debug!(error = %err, "dropping event.error (no receivers)");
         }
