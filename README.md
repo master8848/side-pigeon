@@ -1,6 +1,6 @@
 # provider-connect
 
-Rust sidecar library + binary that connects AI agents to messaging providers
+Rust sidecar library + binary that connects apps and AI agents to messaging providers
 (Discord, Telegram, Slack, ...) with a clean, language-agnostic API:
 JSON-RPC 2.0 over stdio (primary), WebSocket and HTTP (optional), plus direct
 Rust library calls. Target: idle RSS < 30-50 MB (fixes the ~400 MB idle-RAM
@@ -113,5 +113,7 @@ Agents connect/disconnect without provider reconnect.
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) · [docs/api-contract.md](docs/api-contract.md) · [docs/supply-chain.md](docs/supply-chain.md) · [docs/phases/README.md](docs/phases/README.md).
+
+For regular web apps/CLIs without an AI agent, see [docs/app-integration.md](docs/app-integration.md).
 
 Release profile is `LTO thin`, `panic=abort`, `strip` at `Cargo.toml:31` for binary size.
