@@ -4,7 +4,7 @@
 
 ## Why
 
-`README.md:6` promises WS/HTTP optional, but `bin/pc/src/main.rs:170` only calls `serve_stdio`; `state.rs:48` documents `ws: one per connection; http: none — notifications dropped` as aspirational. Stdio is single-parent (one `opencode-plugin` *or* `pi-plugin`, not both). Next.js solved this with standalone server + Route Handlers — any client `fetch("/api/send")` hooks a single origin. The **bod server** is that origin for providers.
+`README.md:6` promises WS/HTTP optional, but `bin/pc/src/main.rs:170` only calls `serve_stdio`; `state.rs:48` documents `ws: one per connection; http: none — notifications dropped` as aspirational. Stdio is single-parent (one `opencode-plugin` _or_ `pi-plugin`, not both). Next.js solved this with standalone server + Route Handlers — any client `fetch("/api/send")` hooks a single origin. The **bod server** is that origin for providers.
 
 ## Scope
 

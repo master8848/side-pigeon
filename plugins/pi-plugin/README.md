@@ -82,14 +82,14 @@ Example tool calls (from the model):
 
 ## Config reference
 
-| Variable | Meaning |
-|---|---|
-| `PC_BIN` | path to the `pc` sidecar (default: `<repo>/target/{release,debug}/pc`, then `PATH`) |
-| `PC_CONFIG` | JSON config file for `pc` |
-| `PC_PROVIDERS` | comma-separated provider ids when no config file is given |
-| `PC_TELEGRAM_TOKEN` | Telegram bot token |
-| `PC_DISCORD_TOKEN` | Discord bot token |
-| `PC_<ID>_CONFIG` | optional extra JSON merged into the provider config |
+| Variable            | Meaning                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `PC_BIN`            | path to the `pc` sidecar (default: `<repo>/target/{release,debug}/pc`, then `PATH`) |
+| `PC_CONFIG`         | JSON config file for `pc`                                                           |
+| `PC_PROVIDERS`      | comma-separated provider ids when no config file is given                           |
+| `PC_TELEGRAM_TOKEN` | Telegram bot token                                                                  |
+| `PC_DISCORD_TOKEN`  | Discord bot token                                                                   |
+| `PC_<ID>_CONFIG`    | optional extra JSON merged into the provider config                                 |
 
 ## Limitations
 

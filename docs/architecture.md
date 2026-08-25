@@ -49,6 +49,7 @@ transports (crates/provider-transport)
 ## 5. Dependency set — PENDING merge from rust-ecosystem.md
 
 (placeholders, to be finalized when the research doc lands)
+
 - Runtime: tokio (minimal features)
 - HTTP/WS: reqwest, tokio-tungstenite (hand-rolled providers per ZeroClaw pattern)
 - Optional SDKs for complex protocols: matrix-sdk
@@ -68,9 +69,9 @@ transports (crates/provider-transport)
 
 ## 7. Risks & mitigations
 
-| Risk | Mitigation |
-|---|---|
-| WhatsApp Web protocol complexity | use `whatsapp-rust@0.7.0` (crates.io) or wa-rs; keep cloud API (webhook) as the simple path first |
-| Idle RSS budget vs tokio baseline | measure early; single runtime, no extra threads; consider jemalloc; panic=abort |
-| Provider API churn | hand-rolled thin clients on reqwest/tungstenite; feature-gated; per-provider crates isolate breakage |
-| Supply-chain | 14-day crates.io `created_at` gate; Cargo.lock committed |
+| Risk                              | Mitigation                                                                                           |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| WhatsApp Web protocol complexity  | use `whatsapp-rust@0.7.0` (crates.io) or wa-rs; keep cloud API (webhook) as the simple path first    |
+| Idle RSS budget vs tokio baseline | measure early; single runtime, no extra threads; consider jemalloc; panic=abort                      |
+| Provider API churn                | hand-rolled thin clients on reqwest/tungstenite; feature-gated; per-provider crates isolate breakage |
+| Supply-chain                      | 14-day crates.io `created_at` gate; Cargo.lock committed                                             |

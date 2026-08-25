@@ -8,12 +8,12 @@ this skill installs a tiny Python 3 stdlib CLI and every action spawns the
 provider-connect binary, does one job, and exits. No plugin, no long-running
 in-agent process.
 
-| File | Purpose |
-| --- | --- |
-| `pc_msg.py` | The skill's one script (Python 3 stdlib only, no deps). |
-| `SKILL.md` | The skill definition (generic markdown, both agent types). |
-| `sessions.example.json` | Config template: chat ids → agent sessions. |
-| `tests/test_pc_msg.py` | Unit tests (JSON parsing, session resolution, mocked subprocess flows). |
+| File                    | Purpose                                                                 |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `pc_msg.py`             | The skill's one script (Python 3 stdlib only, no deps).                 |
+| `SKILL.md`              | The skill definition (generic markdown, both agent types).              |
+| `sessions.example.json` | Config template: chat ids → agent sessions.                             |
+| `tests/test_pc_msg.py`  | Unit tests (JSON parsing, session resolution, mocked subprocess flows). |
 
 The script talks to the **`pc-connect` CLI** (contract: `send --provider <id>
 --chat <chat-id> [--text <text>|--text-file -]` prints receipt JSON; `listen
@@ -139,11 +139,11 @@ pc_msg forward --chat 123456789 --text-file - < msg.txt
 
 Resolves the session (by session id or by chat id) and executes the handoff:
 
-| agent | handoff command |
-| --- | --- |
-| `opencode` | `opencode run --session <id> [--dir <project>] "<text>"` |
-| `prime` | `prime-agent send <agent-name> "<text>"` |
-| custom | your `handoff` template (placeholders `{session} {chat} {provider} {text}`) |
+| agent      | handoff command                                                             |
+| ---------- | --------------------------------------------------------------------------- |
+| `opencode` | `opencode run --session <id> [--dir <project>] "<text>"`                    |
+| `prime`    | `prime-agent send <agent-name> "<text>"`                                    |
+| custom     | your `handoff` template (placeholders `{session} {chat} {provider} {text}`) |
 
 ### resolve / sessions / check
 
@@ -158,13 +158,29 @@ pc_msg check --provider telegram; echo $?    # 0 available, 1 not
 ```json
 {
   "sessions": [
-    {"id": "opencode-main", "provider": "telegram", "chat": "123456789",
-     "agent": "opencode", "session": "<opencode session id>", "project": "/path/to/repo"},
-    {"id": "prime-research", "provider": "telegram", "chat": "987654321",
-     "agent": "prime", "session": "<agent name from `prime-agent list`>"},
-    {"id": "custom", "provider": "demo", "chat": "demo-room",
-     "agent": "opencode", "session": "any-id",
-     "handoff": ["mycmd", "--session", "{session}", "{text}"]}
+    {
+      "id": "opencode-main",
+      "provider": "telegram",
+      "chat": "123456789",
+      "agent": "opencode",
+      "session": "<opencode session id>",
+      "project": "/path/to/repo"
+    },
+    {
+      "id": "prime-research",
+      "provider": "telegram",
+      "chat": "987654321",
+      "agent": "prime",
+      "session": "<agent name from `prime-agent list`>"
+    },
+    {
+      "id": "custom",
+      "provider": "demo",
+      "chat": "demo-room",
+      "agent": "opencode",
+      "session": "any-id",
+      "handoff": ["mycmd", "--session", "{session}", "{text}"]
+    }
   ]
 }
 ```
@@ -177,7 +193,7 @@ an entry without `provider` matches any provider.
 
 - opencode: `opencode session list`, or the newest directory under
   `~/.local/share/opencode/storage/session/<session-id>/`. `pc_msg resolve
-  --chat <id> --autodetect` prints the heuristic result.
+--chat <id> --autodetect` prints the heuristic result.
 - prime: session files live under `~/.prime/agent/session-artifacts/<uuid>/`,
   but the handoff handle is the agent **name** from `prime-agent list`
   (`prime-agent send <name> <text>`), which is not derivable from the
@@ -194,12 +210,12 @@ an entry without `provider` matches any provider.
 
 ### Receive matrix per provider
 
-| provider | mechanism | while nothing listens | short `pc_msg poll` runs | reliable receiving |
-| --- | --- | --- | --- | --- |
-| `demo` | in-process echo | n/a (local test fixture; announces on start, echoes sends) | full — safe for tests | n/a (local) |
-| `telegram` | Bot API `getUpdates` long-poll (in-memory offset cursor) | no loss for ~24h: the bot API queues updates; they are delivered to the next poll that starts from a low offset | catch-up delivers queued messages, **but** every `pc_msg poll` starts a fresh sidecar process whose offset cursor restarts → recent updates can be re-delivered (dedupe by `message.id`) | keep one sidecar process alive so the cursor advances continuously |
-| `discord` | Gateway v10 WebSocket | **data loss**: gateway delivers only while connected; missed messages are not replayed | receives only while running; anything sent while it was down is gone | sidecar must be running **continuously** (gateway connection, with reconnect) |
-| future providers | varies | assume queue-or-lose per provider | per provider | sidecar |
+| provider         | mechanism                                                | while nothing listens                                                                                           | short `pc_msg poll` runs                                                                                                                                                                 | reliable receiving                                                            |
+| ---------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `demo`           | in-process echo                                          | n/a (local test fixture; announces on start, echoes sends)                                                      | full — safe for tests                                                                                                                                                                    | n/a (local)                                                                   |
+| `telegram`       | Bot API `getUpdates` long-poll (in-memory offset cursor) | no loss for ~24h: the bot API queues updates; they are delivered to the next poll that starts from a low offset | catch-up delivers queued messages, **but** every `pc_msg poll` starts a fresh sidecar process whose offset cursor restarts → recent updates can be re-delivered (dedupe by `message.id`) | keep one sidecar process alive so the cursor advances continuously            |
+| `discord`        | Gateway v10 WebSocket                                    | **data loss**: gateway delivers only while connected; missed messages are not replayed                          | receives only while running; anything sent while it was down is gone                                                                                                                     | sidecar must be running **continuously** (gateway connection, with reconnect) |
+| future providers | varies                                                   | assume queue-or-lose per provider                                                                               | per provider                                                                                                                                                                             | sidecar                                                                       |
 
 Bottom line: **this skill is best for SENDING and for on-demand receive
 checks.** For a dependable always-on inbox, run the sidecar continuously.

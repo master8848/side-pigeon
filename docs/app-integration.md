@@ -8,12 +8,12 @@
 
 ## 30-second picker — which surface do I want?
 
-| Need | Use | Reliable receive? | Install |
-|---|---|---|---|
-| Send-only cron / CLI / script | `pc-connect` one-shots (`send`, `listen --once`) | No — see receiving note | `cargo install --path cli --features telegram,discord` |
-| Long-lived Node or Bun service | `@provider-connect/core` + `pc` child process | Yes — sidecar stays alive | `bun add @provider-connect/core` + `cargo install --path bin/pc` |
-| Polyglot (Python, Go, Ruby, …) | `pc serve` HTTP + SSE | Yes — `pc serve` is the daemon | `cargo install --path bin/pc --features http,ws,telegram,discord` |
-| Pure Rust service | `provider-core` crates directly | Yes — in-process | Add `provider-core` + `provider-telegram`/`provider-discord` as path/crate deps |
+| Need                           | Use                                              | Reliable receive?              | Install                                                                         |
+| ------------------------------ | ------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------- |
+| Send-only cron / CLI / script  | `pc-connect` one-shots (`send`, `listen --once`) | No — see receiving note        | `cargo install --path cli --features telegram,discord`                          |
+| Long-lived Node or Bun service | `@provider-connect/core` + `pc` child process    | Yes — sidecar stays alive      | `bun add @provider-connect/core` + `cargo install --path bin/pc`                |
+| Polyglot (Python, Go, Ruby, …) | `pc serve` HTTP + SSE                            | Yes — `pc serve` is the daemon | `cargo install --path bin/pc --features http,ws,telegram,discord`               |
+| Pure Rust service              | `provider-core` crates directly                  | Yes — in-process               | Add `provider-core` + `provider-telegram`/`provider-discord` as path/crate deps |
 
 Quick rule: if a process is always running, receiving is reliable. If you spawn, do one thing, and exit, receiving has gaps (more below).
 
@@ -33,7 +33,7 @@ cat pc.config.json
   "providers": [
     { "id": "demo" },
     { "id": "telegram", "config": { "token": "123:abc" } },
-    { "id": "discord",  "config": { "token": "MTIz..." } }
+    { "id": "discord", "config": { "token": "MTIz..." } }
   ]
 }
 ```
@@ -92,10 +92,10 @@ import { RpcError } from "@provider-connect/core/client.js";
 const pc = createProviderClient({
   providers: [
     { id: "telegram", token: process.env.TG_TOKEN! },
-    { id: "discord",  token: process.env.DISCORD_TOKEN! },
+    { id: "discord", token: process.env.DISCORD_TOKEN! },
   ],
   plugins: [dedup({ windowMs: 5 * 60_000 })], // dedupe by message.id
-  pcBin: "pc",                                // or "/usr/local/bin/pc"
+  pcBin: "pc", // or "/usr/local/bin/pc"
   requestTimeoutMs: 10_000,
 });
 
@@ -109,7 +109,12 @@ const unsubscribe = pc.subscribe({ provider: "telegram" }, (msg) => {
 
 // Send — replies thread via replyTo
 await pc.send({ provider: "telegram", channelId: "123456789", text: "hello" });
-await pc.send({ provider: "telegram", channelId: "123456789", text: "reply", replyTo: "orig-msg-id" });
+await pc.send({
+  provider: "telegram",
+  channelId: "123456789",
+  text: "reply",
+  replyTo: "orig-msg-id",
+});
 
 // Express example — POST /notify triggers a Telegram message
 // app.post("/notify", async (req, res) => {
@@ -152,15 +157,23 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 
-const receipt = await exec("pc-connect", ["send", "--provider", "telegram", "--chat", "123456789", "--text", "build is green"], {
-  env: { ...process.env, PC_PROVIDERS: "telegram", PC_TELEGRAM_TOKEN: process.env.TG_TOKEN },
-});
+const receipt = await exec(
+  "pc-connect",
+  ["send", "--provider", "telegram", "--chat", "123456789", "--text", "build is green"],
+  {
+    env: { ...process.env, PC_PROVIDERS: "telegram", PC_TELEGRAM_TOKEN: process.env.TG_TOKEN },
+  },
+);
 console.log(JSON.parse(receipt.stdout)); // { message_id, ts }
 
 // One-shot receive (ad-hoc poll) — exits after first event or --timeout
-const polled = await exec("pc-connect", ["listen", "--providers", "telegram", "--once", "--json", "--timeout", "30"], {
-  env: { ...process.env, PC_PROVIDERS: "telegram", PC_TELEGRAM_TOKEN: process.env.TG_TOKEN },
-});
+const polled = await exec(
+  "pc-connect",
+  ["listen", "--providers", "telegram", "--once", "--json", "--timeout", "30"],
+  {
+    env: { ...process.env, PC_PROVIDERS: "telegram", PC_TELEGRAM_TOKEN: process.env.TG_TOKEN },
+  },
+);
 for (const line of polled.stdout.trim().split("\n")) {
   const evt = JSON.parse(line); // { event:"message", message:{ id, channel, channel_id, content, sender, ts } }
   if (evt.event === "error") console.error(evt.error); // { provider, code, message }
@@ -256,12 +269,12 @@ Wire schema and error taxonomy are the contract — see [`docs/api-contract.md`]
 
 `pc-connect` and `pc_msg.py --poll` are **short-lived processes**: they connect, do one job, and exit. Receiving only works **while a listener is running**. If you need reliable receiving, keep a single `pc` or `pc serve` process alive.
 
-| Provider | Mechanism | While nothing listens | Short `pc-connect listen` runs | Reliable receiving |
-|---|---|---|---|---|
-| `demo` | local echo (announces on start) | n/a — per-process fixture | full — safe for tests | local only |
-| `telegram` | Bot API `getUpdates` long-poll (in-memory offset cursor) | queued ~24 h by Telegram | catch-up delivers queued messages, **but** every fresh process resets its cursor → recent messages can be re-delivered — **dedupe by `message.id`** | keep one sidecar alive so the cursor advances continuously |
-| `discord` | Gateway v10 WebSocket | **lost** — gateway only delivers while connected; no replay | receives only while running; anything sent while down is gone | sidecar must run **continuously** (gateway + reconnect) |
-| `pc serve` SSE | `broadcast::Sender<Outbound>` fan-out | in-memory only (no sqlite replay yet) | SSE is live — no backlog on connect | consumers must stay connected |
+| Provider       | Mechanism                                                | While nothing listens                                       | Short `pc-connect listen` runs                                                                                                                      | Reliable receiving                                         |
+| -------------- | -------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `demo`         | local echo (announces on start)                          | n/a — per-process fixture                                   | full — safe for tests                                                                                                                               | local only                                                 |
+| `telegram`     | Bot API `getUpdates` long-poll (in-memory offset cursor) | queued ~24 h by Telegram                                    | catch-up delivers queued messages, **but** every fresh process resets its cursor → recent messages can be re-delivered — **dedupe by `message.id`** | keep one sidecar alive so the cursor advances continuously |
+| `discord`      | Gateway v10 WebSocket                                    | **lost** — gateway only delivers while connected; no replay | receives only while running; anything sent while down is gone                                                                                       | sidecar must run **continuously** (gateway + reconnect)    |
+| `pc serve` SSE | `broadcast::Sender<Outbound>` fan-out                    | in-memory only (no sqlite replay yet)                       | SSE is live — no backlog on connect                                                                                                                 | consumers must stay connected                              |
 
 Practical dedupe:
 
@@ -288,14 +301,14 @@ Also watch `event.error` — e.g. Telegram 401 or Discord gateway close `4004` m
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `pc check` fails, `code -32002 auth` | bad/expired token, Discord `MESSAGE_CONTENT` intent off | verify `PC_<ID>_TOKEN`, re-check provider portal intents |
-| `code -32003 rate limited` | Telegram 429 / Discord 429 | respect `retry_after` in `error.data`; back off |
-| `code -32001 config` | `PC_<ID>_CONFIG` not a JSON object, or `PC_PROVIDERS` mismatch | `echo $PC_TELEGRAM_CONFIG | jq .` — must be an object |
-| `event.error` on `pc-connect listen` / SSE | provider async error (401, gateway close 4004, network) | treat as fatal for that stream — restart the listener; with `@provider-connect/core` the `provider-error` event fires and `Plugin.onError` sees it |
-| Telegram re-delivers old messages | cursor reset on fresh process | dedupe by `message.id` (`dedup` plugin, or a `Set`) |
-| Discord messages missing | nothing was listening | keep `pc`/`pc serve` running continuously |
+| Symptom                                    | Likely cause                                                   | Fix                                                                                                                                                |
+| ------------------------------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pc check` fails, `code -32002 auth`       | bad/expired token, Discord `MESSAGE_CONTENT` intent off        | verify `PC_<ID>_TOKEN`, re-check provider portal intents                                                                                           |
+| `code -32003 rate limited`                 | Telegram 429 / Discord 429                                     | respect `retry_after` in `error.data`; back off                                                                                                    |
+| `code -32001 config`                       | `PC_<ID>_CONFIG` not a JSON object, or `PC_PROVIDERS` mismatch | `echo $PC_TELEGRAM_CONFIG                                                                                                                          | jq .` — must be an object |
+| `event.error` on `pc-connect listen` / SSE | provider async error (401, gateway close 4004, network)        | treat as fatal for that stream — restart the listener; with `@provider-connect/core` the `provider-error` event fires and `Plugin.onError` sees it |
+| Telegram re-delivers old messages          | cursor reset on fresh process                                  | dedupe by `message.id` (`dedup` plugin, or a `Set`)                                                                                                |
+| Discord messages missing                   | nothing was listening                                          | keep `pc`/`pc serve` running continuously                                                                                                          |
 
 Wire codes are shared across every surface (`pc` stdio, `pc-connect`, `pc serve` HTTP/SSE) — see [`docs/api-contract.md`](api-contract.md) for the full method/error contract.
 

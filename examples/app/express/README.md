@@ -1,4 +1,4 @@
-# examples/app/express — HTTP app using @provider-connect/core
+# examples/app/express — HTTP app using @mbsks/side-pigeon
 
 Minimal HTTP server that embeds the Rust sidecar via the **high-level headless client**
 (`createProviderClient`), not hand-rolled NDJSON.
@@ -15,15 +15,15 @@ curl http://localhost:3000/events   # SSE stream of event.message
 
 What it demonstrates vs `examples/node` (raw wire):
 
-| | `examples/node` | `examples/app/express` |
-|---|---|---|
-| Client | hand-rolled `JsonRpcClient` NDJSON | `createProviderClient` + `stdio` transport |
-| Dedup | none | `dedup()` plugin |
-| Receiving | `on('notification')` switch | `pc.subscribe({}, handler)` + SSE fan-out |
-| Sending | `request('send', {message:{channel_id}})` | `pc.send({provider, channelId, text})` |
+|           | `examples/node`                           | `examples/app/express`                     |
+| --------- | ----------------------------------------- | ------------------------------------------ |
+| Client    | hand-rolled `JsonRpcClient` NDJSON        | `createProviderClient` + `stdio` transport |
+| Dedup     | none                                      | `dedup()` plugin                           |
+| Receiving | `on('notification')` switch               | `pc.subscribe({}, handler)` + SSE fan-out  |
+| Sending   | `request('send', {message:{channel_id}})` | `pc.send({provider, channelId, text})`     |
 
-Install for real apps: `bun add @provider-connect/core` then
-`import { createProviderClient } from "@provider-connect/core"`.
+Install for real apps: `bun add @mbsks/side-pigeon` then
+`import { createProviderClient } from "@mbsks/side-pigeon"`.
 The relative `../../../packages/core/src/*` import here is dev-only so the
 example runs without publishing. Memory note: Rust sidecar holds provider
 connections; Node RSS stays flat — same as `examples/node:120` proof.

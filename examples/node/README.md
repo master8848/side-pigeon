@@ -12,10 +12,10 @@ Zero dependencies — plain Node built-ins only (`child_process`, `readline`,
 
 ## Requirements
 
-* Node.js ≥ 18
-* Rust toolchain (only to build the sidecar the first time)
-* A bot token + a chat/channel id for Telegram or Discord
-  * Discord: `MESSAGE_CONTENT` intent enabled in the developer portal
+- Node.js ≥ 18
+- Rust toolchain (only to build the sidecar the first time)
+- A bot token + a chat/channel id for Telegram or Discord
+  - Discord: `MESSAGE_CONTENT` intent enabled in the developer portal
 
 ## Usage
 

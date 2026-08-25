@@ -1,30 +1,28 @@
-# provider-connect
+# side-pigeon
 
-Rust sidecar library + binary that connects apps and AI agents to messaging providers
-(Discord, Telegram, Slack, ...) with a clean, language-agnostic API:
-JSON-RPC 2.0 over stdio (primary), WebSocket and HTTP (optional), plus direct
-Rust library calls. Target: idle RSS < 30-50 MB (fixes the ~400 MB idle-RAM
-problem of JS agent SDKs).
+> **side-pigeon** — Rust sidecar + headless JS that connects any Node/Bun app or AI agent to messaging providers (Telegram, Discord, Slack, ...) over a clean JSON-RPC 2.0 API.
 
-Status: implementation in progress (see [docs/architecture.md](docs/architecture.md)).
+- **Rust sidecar** (`pc`/`side-pigeon` binary) owns the provider connections (Telegram long-poll, Discord Gateway WS, ...). Idle RSS target **< 30–50 MB** (fixes the ~400 MB idle-RAM trap of JS SDKs).
+- **Headless TS** (`@mbsks/side-pigeon`) spawns that sidecar over **stdio NDJSON**, speaks `initialize → listen → send → shutdown` (`event.message`/`event.error`).
+- **Transports**: stdio (primary, default lean), WebSocket and HTTP (feature-gated `pc serve`).
+- **Plugins**: local TypeScript extensions for **Opencode** and **Pi** that reuse the same sidecar.
+
+Status: implementation in progress (see [`docs/architecture.md`](docs/architecture.md)). Prerelease `0.1.0`.
 
 ## Install
 
-Rust sidecar:
-
 ```sh
-cargo install --path bin/pc          # binary `pc` (add --features telegram,discord,http,ws)
-cargo install --path bin/pc --features telegram,discord
+# sidecar (lean stdio by default; add providers as features)
+cargo install --path bin/pc          # binary `pc`
+cargo install --path bin/pc --features telegram,discord,http,ws
+
+# headless JS (any agent or plain app)
+bun add @mbsks/side-pigeon
 ```
 
-Headless TS core (any Bun/Node agent):
+Requires **Rust 1.97.1** (see `rust-toolchain.toml` / `mise.toml`) and **Bun ≥ 1.4 / Node ≥ 20**.
 
-```sh
-bun add @provider-connect/core
-# or: npm add @provider-connect/core
-```
-
-Requires Rust ≥1.80, Node ≥20 / Bun ≥1.0.
+`bun` is the package manager — `npm` also works but we commit `bun.lockb`.
 
 ## Quick start
 
@@ -43,10 +41,10 @@ pc send --provider demo --chat my-room --text "hello"
 pc listen --once --timeout 10
 ```
 
-Headless TS (any agent, 5 lines):
+Headless TS (any Node/Bun process, 5 lines):
 
 ```ts
-import { createProviderClient } from "@provider-connect/core";
+import { createProviderClient } from "@mbsks/side-pigeon";
 const pc = createProviderClient({ providers: [{ id: "demo" }], pcBin: "pc" });
 await pc.start();
 pc.subscribe({}, (msg) => console.log(msg));
@@ -63,10 +61,9 @@ File (`pc.config.json` or `pc.config.ts`) or env:
 
 ```ts
 // pc.config.ts (typed helper)
-import { defineConfig } from "@provider-connect/core/config"; // if exported, else plain JSON
-export default defineConfig({
+export default {
   providers: [{ id: "telegram", config: { token: process.env.TG_TOKEN! } }],
-});
+};
 ```
 
 CLI flag `pc --config path/to/pc.config.json` overrides. Env fallback:
@@ -83,11 +80,11 @@ Also `PC_CONFIG=/path/to/pc.config.json`.
 
 ## Provider matrix
 
-| Provider | Feature flag | `id` | Transport | Needs |
-|---|---|---|---|---|
-| demo | `demo` (default) | `demo` | echo, no network | nothing |
-| telegram | `telegram` | `telegram` | long-poll (`getUpdates`) | `token` |
-| discord | `discord` | `discord` | gateway WS + REST | `token` |
+| Provider | Feature flag     | `id`       | Transport                | Needs   |
+| -------- | ---------------- | ---------- | ------------------------ | ------- |
+| demo     | `demo` (default) | `demo`     | echo, no network         | nothing |
+| telegram | `telegram`       | `telegram` | long-poll (`getUpdates`) | `token` |
+| discord  | `discord`        | `discord`  | gateway WS + REST        | `token` |
 
 HTTP/WS serving is behind `http`/`ws` features (`pc serve`). Idle sidecar can stay stdio-only and lean.
 
@@ -104,6 +101,27 @@ GET  /ws                     -> WS JSON-RPC (feature `ws`)
 
 Agents connect/disconnect without provider reconnect.
 
+## Tooling
+
+| Tool            | Version     | How pinned                     |
+| --------------- | ----------- | ------------------------------ |
+| Rust            | `1.97.1`    | `rust-toolchain.toml`          |
+| Bun             | `1.4.0`     | `packageManager` + `mise.toml` |
+| Node (fallback) | `22.22.2`   | `mise.toml` + `engines.node`   |
+| TypeScript      | `7.0.2`     | `package.json#devDependencies` |
+| oxlint / oxfmt  | `1.80/0.65` | `package.json#devDependencies` |
+
+```sh
+mise install         # installs Rust + Bun + Node
+bun install          # installs JS deps (writes bun.lockb)
+bun run lint         # oxlint --type-aware .
+bun run format       # oxfmt --check .
+bun run typecheck    # tsc -p <each tsconfig> --noEmit
+cargo test           # Rust tests
+```
+
+Config files: [`.oxlintrc.json`](.oxlintrc.json), [`.oxfmtrc.json`](.oxfmtrc.json).
+
 ## Limitations
 
 - WhatsApp/Slack/Signal/Matrix not yet implemented (hand-rolled on `reqwest` + `tokio-tungstenite` per architecture).
@@ -116,4 +134,8 @@ See [docs/architecture.md](docs/architecture.md) · [docs/api-contract.md](docs/
 
 For regular web apps/CLIs without an AI agent, see [docs/app-integration.md](docs/app-integration.md).
 
-Release profile is `LTO thin`, `panic=abort`, `strip` at `Cargo.toml:31` for binary size.
+Release profile is `LTO thin`, `panic=abort`, `strip` at `Cargo.toml:39` for binary size.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

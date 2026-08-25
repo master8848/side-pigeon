@@ -67,21 +67,21 @@ and use `"plugin": ["@provider-connect/opencode-plugin"]`.
 Plugin options (second element of the `["spec", {options}]` tuple) with
 environment fallbacks:
 
-| Option | Env fallback | Default | Meaning |
-| --- | --- | --- | --- |
-| `pcBin` | `PC_BIN` | `pc` (on PATH) | Path to the sidecar binary |
-| `pcArgs` | — | `[]` | Extra CLI args for `pc` |
-| `pcConfigFile` | — | — | Sidecar JSON config file, passed as `pc -c <path>` (see `bin/pc` usage) |
-| `providers` | `PC_PROVIDERS` | — | Comma-separated provider ids, e.g. `["telegram","discord"]` |
-| `tokens` | `PC_<ID>_TOKEN` | — | Per-provider tokens, e.g. `{"telegram": "123:abc"}` |
-| `providerConfig` | `PC_<ID>_CONFIG` | — | Extra per-provider JSON (base_url, poll_interval_secs, intents, …) |
-| `rooms` | — | all chats | Allowlist per provider: `{"telegram": ["<chat-id>"]}`; empty = every chat gets a session |
-| `agent` | — | default agent | Agent run for inbound messages |
-| `model` | — | session default | `{"providerID": "...", "modelID": "..."}` for inbound runs |
-| `stateFile` | — | `~/.local/state/opencode/provider-connect/state.json` (XDG) | Chat→session mapping persistence |
-| `sessionPrefix` | — | `[<provider>] ` | Session title prefix |
-| `awaitReply` | — | `false` | Wait for the agent reply on inbound (`session.prompt`) instead of fire-and-forget (`promptAsync`) |
-| `ignoreSenderIds` | — | `[]` | Sender ids never routed to a session (see echo caveat) |
+| Option            | Env fallback     | Default                                                     | Meaning                                                                                           |
+| ----------------- | ---------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `pcBin`           | `PC_BIN`         | `pc` (on PATH)                                              | Path to the sidecar binary                                                                        |
+| `pcArgs`          | —                | `[]`                                                        | Extra CLI args for `pc`                                                                           |
+| `pcConfigFile`    | —                | —                                                           | Sidecar JSON config file, passed as `pc -c <path>` (see `bin/pc` usage)                           |
+| `providers`       | `PC_PROVIDERS`   | —                                                           | Comma-separated provider ids, e.g. `["telegram","discord"]`                                       |
+| `tokens`          | `PC_<ID>_TOKEN`  | —                                                           | Per-provider tokens, e.g. `{"telegram": "123:abc"}`                                               |
+| `providerConfig`  | `PC_<ID>_CONFIG` | —                                                           | Extra per-provider JSON (base_url, poll_interval_secs, intents, …)                                |
+| `rooms`           | —                | all chats                                                   | Allowlist per provider: `{"telegram": ["<chat-id>"]}`; empty = every chat gets a session          |
+| `agent`           | —                | default agent                                               | Agent run for inbound messages                                                                    |
+| `model`           | —                | session default                                             | `{"providerID": "...", "modelID": "..."}` for inbound runs                                        |
+| `stateFile`       | —                | `~/.local/state/opencode/provider-connect/state.json` (XDG) | Chat→session mapping persistence                                                                  |
+| `sessionPrefix`   | —                | `[<provider>] `                                             | Session title prefix                                                                              |
+| `awaitReply`      | —                | `false`                                                     | Wait for the agent reply on inbound (`session.prompt`) instead of fire-and-forget (`promptAsync`) |
+| `ignoreSenderIds` | —                | `[]`                                                        | Sender ids never routed to a session (see echo caveat)                                            |
 
 Tokens can live in the opencode config (`tokens`) or the environment
 (`PC_TELEGRAM_TOKEN=...`). Either way they only ever reach the `pc` child
@@ -151,12 +151,12 @@ import { resolveConfig } from './dist/config.js';
 
 ### Dependencies
 
-| Package | Version | Why |
-| --- | --- | --- |
-| `@opencode-ai/plugin` | `1.18.9` (exact) | Plugin API types + `tool()` helper (zod args, shared with the opencode runtime) |
-| `typescript` (dev) | `5.9.3` (exact) | Build/typecheck |
-| `@types/node` (dev) | `24.13.3` (exact) | Node types for `child_process`/`readline` |
-| `eslint`/`typescript-eslint`/`prettier` (dev) | exact | Lint/format gates per CONTRIBUTING |
+| Package                                       | Version           | Why                                                                             |
+| --------------------------------------------- | ----------------- | ------------------------------------------------------------------------------- |
+| `@opencode-ai/plugin`                         | `1.18.9` (exact)  | Plugin API types + `tool()` helper (zod args, shared with the opencode runtime) |
+| `typescript` (dev)                            | `5.9.3` (exact)   | Build/typecheck                                                                 |
+| `@types/node` (dev)                           | `24.13.3` (exact) | Node types for `child_process`/`readline`                                       |
+| `eslint`/`typescript-eslint`/`prettier` (dev) | exact             | Lint/format gates per CONTRIBUTING                                              |
 
 No runtime deps beyond `@opencode-ai/plugin`; the JSON-RPC client is
 hand-rolled on `node:child_process` + `node:readline` (zero extra deps, same
@@ -194,9 +194,9 @@ lockfile is committed.
   - `explicitly_addressed` is always `false` in v0.1 — every message in an
     allowlisted chat is routed.
 - **One session per chat**: all inbound messages of a chat go to one session;
-    concurrent chats each get their own session. Messages arriving while the
-    session is busy are queued by opencode (or fail with a logged
-    `event.error`-style entry in `provider_status` if the session rejects).
+  concurrent chats each get their own session. Messages arriving while the
+  session is busy are queued by opencode (or fail with a logged
+  `event.error`-style entry in `provider_status` if the session rejects).
 - **No media round-trip**: inbound media becomes `[media]` markers; the agent
   cannot receive files into the session (v0.1 contract).
 - **No outbound history**: the plugin does not write agent replies back as

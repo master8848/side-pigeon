@@ -119,7 +119,9 @@ Copy-paste `watcher.mjs`. Pattern mirrors `examples/node/index.mjs:64` `JsonRpcC
 const SSE_URL = process.env.PC_SSE_URL || "http://localhost:8788/api/events";
 const seen = new Set(); // dedup by message.id (reconnects may replay last frame)
 
-function chatKey(provider, chatId) { return `${provider}:${chatId}`; }
+function chatKey(provider, chatId) {
+  return `${provider}:${chatId}`;
+}
 // same key as plugins/opencode-plugin/src/session-map.ts:24
 // Pi's Python equivalent: sanitize_component() in plugins/pi-plugin/pc_connect.py:129
 
@@ -129,7 +131,10 @@ async function handleMessage(msg) {
   if (seen.has(msg.id)) return;
   seen.add(msg.id);
   const key = chatKey(msg.channel, msg.channel_id);
-  const text = (msg.content || []).map(p => p.Text ?? "").join(" ").trim();
+  const text = (msg.content || [])
+    .map((p) => p.Text ?? "")
+    .join(" ")
+    .trim();
   const session = `sessions/${key.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`;
   console.log(`[watcher] ${key} id=${msg.id} -> hermes --resume ${session}`);
 
@@ -151,7 +156,8 @@ async function watch() {
         buf += decoder.decode(value, { stream: true });
         let idx;
         while ((idx = buf.indexOf("\n\n")) !== -1) {
-          const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
           for (const line of chunk.split("\n")) {
             if (!line.startsWith("data: ")) continue;
             const evt = JSON.parse(line.slice(6));
@@ -162,7 +168,7 @@ async function watch() {
       }
     } catch (e) {
       console.error("[watcher] SSE error, retrying in 1s:", e.message);
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1000));
     }
   }
 }
@@ -253,13 +259,13 @@ pc serve --http :8788 --ws :8787 \
 
 ## Choosing between the options
 
-| Approach | Latency | Reliability | Ops | When to use |
-|---|---|---|---|---|
-| **Option 1 — external SSE watcher** (today) | ~10–50 ms added (HTTP + spawn) | At-most-once (in-memory fan-out; gaps if watcher down) | Two units: `pc` + watcher | Default. No Rust change. Works now. |
-| **Option 1 — external WS watcher** | similar, slightly lower overhead | At-most-once (same) | Two units | You already speak WS (see `examples/node/index.mjs`) |
-| **Option 2 — `--on-message-exec`** (future) | lowest (no HTTP hop) | At-least-once with `--sqlite` queue | One unit: `pc` wakes Hermes | You need no-gap wake + single supervisor |
-| **Option 2 — `--on-message-webhook`** (future) | + HTTP RTT to your hook server | At-least-once with sqlite | `pc` + hook server | Hermes already has an HTTP hook endpoint |
-| **Socket activation** (systemd `Accept=yes` / launchd) | similar to exec | At-most-once | OS-managed | You want the OS to spawn Hermes on demand |
+| Approach                                               | Latency                          | Reliability                                            | Ops                         | When to use                                          |
+| ------------------------------------------------------ | -------------------------------- | ------------------------------------------------------ | --------------------------- | ---------------------------------------------------- |
+| **Option 1 — external SSE watcher** (today)            | ~10–50 ms added (HTTP + spawn)   | At-most-once (in-memory fan-out; gaps if watcher down) | Two units: `pc` + watcher   | Default. No Rust change. Works now.                  |
+| **Option 1 — external WS watcher**                     | similar, slightly lower overhead | At-most-once (same)                                    | Two units                   | You already speak WS (see `examples/node/index.mjs`) |
+| **Option 2 — `--on-message-exec`** (future)            | lowest (no HTTP hop)             | At-least-once with `--sqlite` queue                    | One unit: `pc` wakes Hermes | You need no-gap wake + single supervisor             |
+| **Option 2 — `--on-message-webhook`** (future)         | + HTTP RTT to your hook server   | At-least-once with sqlite                              | `pc` + hook server          | Hermes already has an HTTP hook endpoint             |
+| **Socket activation** (systemd `Accept=yes` / launchd) | similar to exec                  | At-most-once                                           | OS-managed                  | You want the OS to spawn Hermes on demand            |
 
 Rule of thumb: start with Option 1 SSE watcher (10 lines), move to Option 2 when the `sqlite` replay lands.
 

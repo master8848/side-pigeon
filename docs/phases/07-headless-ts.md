@@ -4,7 +4,7 @@
 
 ## Why
 
-`plugins/opencode-plugin/src/pc-client.ts:82` `PcClient` (spawn + `readline` NDJSON + id-matched `pending` + `EventEmitter`) and `plugins/opencode-plugin/src/runtime.ts:68` `ProviderConnectRuntime` (dedup at `runtime.ts:77` `recentIds/recentSent`, `SessionMap` at `session-map.ts:28`, `rooms` allowlist) are welded to Opencode's `ClientLike` at `runtime.ts:21`. There are three duplicated NDJSON clients (`pc-client.ts:64`, `examples/node/index.mjs:64`, `pi-plugin` style). The promise is `bun add provider-connect` works for *any* agent (Opencode / Pi / Eliza / custom Node script) in 5 lines.
+`plugins/opencode-plugin/src/pc-client.ts:82` `PcClient` (spawn + `readline` NDJSON + id-matched `pending` + `EventEmitter`) and `plugins/opencode-plugin/src/runtime.ts:68` `ProviderConnectRuntime` (dedup at `runtime.ts:77` `recentIds/recentSent`, `SessionMap` at `session-map.ts:28`, `rooms` allowlist) are welded to Opencode's `ClientLike` at `runtime.ts:21`. There are three duplicated NDJSON clients (`pc-client.ts:64`, `examples/node/index.mjs:64`, `pi-plugin` style). The promise is `bun add provider-connect` works for _any_ agent (Opencode / Pi / Eliza / custom Node script) in 5 lines.
 
 ## Scope
 
@@ -12,9 +12,9 @@
   ```ts
   export function createProviderClient(opts: {
     providers: ProviderDef[]; // telegram(opts), discord(opts)
-    transports?: Transport[];  // stdio({bin}), websocket({port}), http({url})
-    plugins?: Plugin[];        // retry(), dedup({windowMs}), logger()
-    defaultSendOptions?: { timeoutMs: number; retryOn: ("Network"|"RateLimit")[] };
+    transports?: Transport[]; // stdio({bin}), websocket({port}), http({url})
+    plugins?: Plugin[]; // retry(), dedup({windowMs}), logger()
+    defaultSendOptions?: { timeoutMs: number; retryOn: ("Network" | "RateLimit")[] };
   }): ProviderClient;
   // ProviderClient: subscribe(filter: EventFilter, cb) => unsubscribe
   //               .createSendMutation({onMutate, onSuccess, onError})
@@ -30,10 +30,13 @@
 
 - `plugins/opencode-plugin/src/index.ts:18` `ProviderConnectServer` becomes:
   ```ts
-  import { createProviderClient } from '@provider-connect/core';
-  import { opencodeAdapter } from '@provider-connect/opencode';
+  import { createProviderClient } from "@provider-connect/core";
+  import { opencodeAdapter } from "@provider-connect/opencode";
   export const ProviderConnectServer = async (input, opts) => {
-    const pc = createProviderClient({ providers: resolveProviders(opts), transports:[stdio({bin: opts.pcBin})] });
+    const pc = createProviderClient({
+      providers: resolveProviders(opts),
+      transports: [stdio({ bin: opts.pcBin })],
+    });
     return opencodeAdapter(pc, input);
   };
   ```

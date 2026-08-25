@@ -110,14 +110,29 @@ Map provider chats to agent sessions so incoming messages can be handed off:
 ```json
 {
   "sessions": [
-    { "id": "opencode-main", "provider": "telegram", "chat": "123456789",
-      "agent": "opencode", "session": "<opencode session id>",
-      "project": "/path/to/repo" },
-    { "id": "prime-research", "provider": "telegram", "chat": "987654321",
-      "agent": "prime", "session": "<agent name from `prime-agent list`>" },
-    { "id": "custom", "provider": "demo", "chat": "demo-room",
-      "agent": "opencode", "session": "any-id",
-      "handoff": ["mycmd", "--session", "{session}", "{text}"] }
+    {
+      "id": "opencode-main",
+      "provider": "telegram",
+      "chat": "123456789",
+      "agent": "opencode",
+      "session": "<opencode session id>",
+      "project": "/path/to/repo"
+    },
+    {
+      "id": "prime-research",
+      "provider": "telegram",
+      "chat": "987654321",
+      "agent": "prime",
+      "session": "<agent name from `prime-agent list`>"
+    },
+    {
+      "id": "custom",
+      "provider": "demo",
+      "chat": "demo-room",
+      "agent": "opencode",
+      "session": "any-id",
+      "handoff": ["mycmd", "--session", "{session}", "{text}"]
+    }
   ]
 }
 ```
@@ -135,7 +150,7 @@ Session ids:
 
 - **opencode**: `opencode session list`, or the newest dir under
   `~/.local/share/opencode/storage/session/<id>/` (`pc_msg resolve
-  --chat <id> --autodetect` suggests one).
+--chat <id> --autodetect` suggests one).
 - **prime**: the session lives under
   `~/.prime/agent/session-artifacts/<session-uuid>/`; the handoff handle is
   the agent NAME from `prime-agent list` (delivered via

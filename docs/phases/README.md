@@ -4,17 +4,17 @@
 
 Read in order. Each phase is one small vertical slice (1–3 commits, <1 day), additive and non-breaking on the wire (`jsonrpc.rs:21` `Id/Request/Response` stable).
 
-| Phase | Title | Lens | Status |
-|---|---|---|---|
-| 01 | Foundation fixes | review P0/P1 | **done** (`e04ec4a`, `430a8ca`, `a20911b`) |
-| 02 | Runtime trim | Bun | **done** (`e9278cc`) |
-| 03 | Config crate | Rspack/Next.js | **done** (`d7e23d7`) |
-| 04 | Single binary (`pc`) | Rspack/Bun | **done** (`250821a`) |
-| 05 | EventBus + Plugin | TankStack | **done** (`f700f4d`) |
-| 06 | HTTP transport (`pc serve`) | Next.js | **done** (`697c335`) |
-| 07 | Headless TS core | TankStack/Bun | **done** (`2e7ba01`) |
-| 08 | FFI + bod daemon | Bun | **done** (`c719966`) |
-| 09 | Polish & release | all | **done** (`700dbe1`) |
+| Phase | Title                       | Lens           | Status                                     |
+| ----- | --------------------------- | -------------- | ------------------------------------------ |
+| 01    | Foundation fixes            | review P0/P1   | **done** (`e04ec4a`, `430a8ca`, `a20911b`) |
+| 02    | Runtime trim                | Bun            | **done** (`e9278cc`)                       |
+| 03    | Config crate                | Rspack/Next.js | **done** (`d7e23d7`)                       |
+| 04    | Single binary (`pc`)        | Rspack/Bun     | **done** (`250821a`)                       |
+| 05    | EventBus + Plugin           | TankStack      | **done** (`f700f4d`)                       |
+| 06    | HTTP transport (`pc serve`) | Next.js        | **done** (`697c335`)                       |
+| 07    | Headless TS core            | TankStack/Bun  | **done** (`2e7ba01`)                       |
+| 08    | FFI + bod daemon            | Bun            | **done** (`c719966`)                       |
+| 09    | Polish & release            | all            | **done** (`700dbe1`)                       |
 
 ## How the lenses map
 

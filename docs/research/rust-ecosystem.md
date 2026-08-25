@@ -5,15 +5,15 @@
 
 ## Implementation reality (final Cargo.toml, workspace)
 
-| Area | Choice | Why (verified) |
-|---|---|---|
-| Runtime | `tokio` (rt-multi-thread, macros, sync, io-std, io-util, time, net) | minimal feature set; `pc` binary uses `current_thread` runtime |
-| HTTP client | `reqwest` 0.12 (default-features off, rustls-tls) | hand-rolled provider clients (ZeroClaw pattern); rustls avoids OpenSSL |
-| WebSocket | `tokio-tungstenite` 0.24 | Discord Gateway v10 + optional ws transport |
-| JSON-RPC | hand-rolled on serde_json (newline-delimited stdio) | smaller than jsonrpsee; exact control over framing/errors |
-| Errors | `thiserror` 2 | contract ProviderError variants |
-| Logging | `tracing` + `tracing-subscriber` (fmt, env-filter) | stderr logs; stdout reserved for RPC |
-| Async traits | `async-trait` | Box<dyn ChatProvider> in the registry |
+| Area         | Choice                                                              | Why (verified)                                                         |
+| ------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Runtime      | `tokio` (rt-multi-thread, macros, sync, io-std, io-util, time, net) | minimal feature set; `pc` binary uses `current_thread` runtime         |
+| HTTP client  | `reqwest` 0.12 (default-features off, rustls-tls)                   | hand-rolled provider clients (ZeroClaw pattern); rustls avoids OpenSSL |
+| WebSocket    | `tokio-tungstenite` 0.24                                            | Discord Gateway v10 + optional ws transport                            |
+| JSON-RPC     | hand-rolled on serde_json (newline-delimited stdio)                 | smaller than jsonrpsee; exact control over framing/errors              |
+| Errors       | `thiserror` 2                                                       | contract ProviderError variants                                        |
+| Logging      | `tracing` + `tracing-subscriber` (fmt, env-filter)                  | stderr logs; stdout reserved for RPC                                   |
+| Async traits | `async-trait`                                                       | Box<dyn ChatProvider> in the registry                                  |
 
 ## Memory results (measured 2026-08-11)
 

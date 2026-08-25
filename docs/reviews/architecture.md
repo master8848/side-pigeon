@@ -7,17 +7,17 @@
 
 ## 0. Verification evidence (re-run during this review)
 
-| Check | Command | Result |
-|---|---|---|
-| Tests | `cargo test --workspace --all-features` | **PASS** — 57 tests + 2 doc-tests, 0 failures (core 7, telegram 9, discord 14, transport stdio 13 / ws 1 / http 1, bin config 2, doc-tests 2) |
-| Lint | `cargo clippy --workspace --all-features --all-targets` | **PASS** — 0 warnings |
-| Format | `cargo fmt --all --check` | **FAIL** — 25 diffs (provider-telegram 6, provider-discord 19, all in test code) |
-| Feature matrix | `cargo check -p provider-core --no-default-features`, `provider-transport` `--no-default-features` / `--features http` / `--features ws` | **PASS** |
-| Supply chain | `./scripts/check-supply-chain.sh` | **PASS** — 159 registry crates, all ≥ 14 d old; youngest `zmij` 237 d |
-| Memory | `/usr/bin/time -l ./target/release/pc --help` / idle (3 s stdin sleep) | **PASS** — 1.64 MB / 2.28 MB max RSS |
-| Binary size | `target/release/pc` | 1,202,416 B ≈ 1.15 MB stripped (note: built with **default features only — demo provider**; the 1.1 MB claim in `docs/research/rust-ecosystem.md` holds for the demo build, not for `--features telegram,discord`) |
-| Unsafe audit | `grep -r unsafe` over all `.rs` | **PASS** — zero `unsafe` tokens; `#![forbid(unsafe_code)]` only in `provider-core` + `provider-transport` |
-| Git hygiene | `git status` clean, `Cargo.lock` tracked, identity configured | PASS |
+| Check          | Command                                                                                                                                  | Result                                                                                                                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tests          | `cargo test --workspace --all-features`                                                                                                  | **PASS** — 57 tests + 2 doc-tests, 0 failures (core 7, telegram 9, discord 14, transport stdio 13 / ws 1 / http 1, bin config 2, doc-tests 2)                                                                      |
+| Lint           | `cargo clippy --workspace --all-features --all-targets`                                                                                  | **PASS** — 0 warnings                                                                                                                                                                                              |
+| Format         | `cargo fmt --all --check`                                                                                                                | **FAIL** — 25 diffs (provider-telegram 6, provider-discord 19, all in test code)                                                                                                                                   |
+| Feature matrix | `cargo check -p provider-core --no-default-features`, `provider-transport` `--no-default-features` / `--features http` / `--features ws` | **PASS**                                                                                                                                                                                                           |
+| Supply chain   | `./scripts/check-supply-chain.sh`                                                                                                        | **PASS** — 159 registry crates, all ≥ 14 d old; youngest `zmij` 237 d                                                                                                                                              |
+| Memory         | `/usr/bin/time -l ./target/release/pc --help` / idle (3 s stdin sleep)                                                                   | **PASS** — 1.64 MB / 2.28 MB max RSS                                                                                                                                                                               |
+| Binary size    | `target/release/pc`                                                                                                                      | 1,202,416 B ≈ 1.15 MB stripped (note: built with **default features only — demo provider**; the 1.1 MB claim in `docs/research/rust-ecosystem.md` holds for the demo build, not for `--features telegram,discord`) |
+| Unsafe audit   | `grep -r unsafe` over all `.rs`                                                                                                          | **PASS** — zero `unsafe` tokens; `#![forbid(unsafe_code)]` only in `provider-core` + `provider-transport`                                                                                                          |
+| Git hygiene    | `git status` clean, `Cargo.lock` tracked, identity configured                                                                            | PASS                                                                                                                                                                                                               |
 
 ## 1. Strengths
 
@@ -61,7 +61,7 @@ the deciding factor here — binary size, maintenance burden, and fit are.
   deps, and it already implements exactly what the wire needs (NDJSON framing,
   error codes, notifications). jsonrpsee (first pub 2020-02-28, 2.36 M
   downloads) is built around **WS/HTTP servers and its own subscription
-  machinery** — it has *no stdio transport*, so the NDJSON loop would still be
+  machinery** — it has _no stdio transport_, so the NDJSON loop would still be
   hand-written; you would additionally inherit its tower/hyper/soketto closure
   (~30+ crates) and its proc-macro API for a handful of methods.
 - Cost of switching: +0.5–1 MB binary, +~30 crates to audit, 2–3 days of
@@ -94,7 +94,7 @@ the deciding factor here — binary size, maintenance burden, and fit are.
   already implements the hard parts: RESUME with session id + seq, immediate
   first heartbeat with ACK tracking, `INVALID_SESSION` resumability handling.
 - **Escape hatch:** `twilight-gateway` (2020-08-30, focused gateway client,
-  ~1/10th of serenity's footprint) is the right *if we ever* need sharding,
+  ~1/10th of serenity's footprint) is the right _if we ever_ need sharding,
   zlib/permessage-deflate compression, or the full opcode matrix. Effort to
   switch today: 2–3 days + new dep tree; **not recommended for v0.2** given the
   current feature surface (messages only, no voice/interactions/sharding).
@@ -128,7 +128,7 @@ the deciding factor here — binary size, maintenance burden, and fit are.
 ### 2.6 tracing vs log — **KEEP tracing**
 
 - tracing is the right choice for async (span context, per-provider task
-  correlation); `EnvFilter` + stderr writer is minimal and the 
+  correlation); `EnvFilter` + stderr writer is minimal and the
   `matchers`/`regex-automata` closure it adds is acceptable. `log` would save
   ~5 crates but lose span context for zero user-visible gain. Keep.
 
@@ -141,7 +141,7 @@ the deciding factor here — binary size, maintenance burden, and fit are.
   per-call boxing cost is irrelevant at this scale. A redesign to `&self` +
   interior-mutable task handles (both providers already clone state into
   `Arc<Self>` at `start()`, so the shape is half-way there) would make the
-  trait dyn-compatible *without* async-trait and unlock edition 2024 — **~1 day
+  trait dyn-compatible _without_ async-trait and unlock edition 2024 — **~1 day
   of work, defer to the edition-2024 breaking window, not worth it in v0.2.**
 
 ### 2.8 hyper hand-rolled HTTP server (vs axum) — **KEEP**
@@ -207,7 +207,7 @@ These are the real answers to the review question (small, concrete):
 - **No jitter in either backoff.** Telegram `2^n * base` and Discord
   `500 ms * 2^n` are deterministic and capped at 30 s; N restarted instances
   synchronize, and synchronized Telegram restarts cause 409 conflicting
-  long-poll storms (which are *fatal* here — a transient 409 kills polling
+  long-poll storms (which are _fatal_ here — a transient 409 kills polling
   permanently). Add ±20% jitter and treat 409 as retryable-once (another
   instance polling is exactly the "retry after a moment" case).
 - Telegram long-poll has no overall connection-timeout cap on the `getUpdates`
@@ -222,11 +222,11 @@ These are the real answers to the review question (small, concrete):
   bcast→forwarder→`out_tx`). The stdio docs claim "written in the order they
   were produced" — true per producer, **not** across producers. The
   `send_returns_receipt_and_echoes` test only passes because the demo provider
-  calls `on_message` synchronously *inside* `send()`. Real providers will
+  calls `on_message` synchronously _inside_ `send()`. Real providers will
   interleave arbitrarily; document this and make clients key on `id`
   (they already must — fine).
 - **Silent drop on overload (P1).** `broadcast::channel(512)` with
-  `RecvError::Lagged` → warn + drop: inbound messages are *dropped* under burst
+  `RecvError::Lagged` → warn + drop: inbound messages are _dropped_ under burst
   load with no client-visible signal (the warning goes to stderr logs). For a
   messaging sidecar, dropping an inbound message is the worst failure mode.
   Prefer a bounded `mpsc` writer queue with backpressure (providers block on
@@ -266,7 +266,7 @@ These are the real answers to the review question (small, concrete):
 
 - `ChatProvider` is small and right; `ProviderEvents` being sync keeps the
   provider hot path allocation-free. `take_last_error` is a nice touch but is
-  the *only* error channel (see 3.1).
+  the _only_ error channel (see 3.1).
 - **Discord REST has no default timeout** (`reqwest::Client::new()`), Telegram
   defaults 60 s — inconsistent; a hung Discord `send` blocks the caller
   indefinitely. Default to a timeout on both.

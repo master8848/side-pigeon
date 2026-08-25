@@ -7,21 +7,21 @@ protocols).
 
 ## Features
 
-* **Inbound** — background polling task started by [`ChatProvider::start`]
+- **Inbound** — background polling task started by [`ChatProvider::start`]
   (`getUpdates`, offset cursor, 30 s long-poll, 1 s idle poll interval, both
   configurable). Each `update.message` is normalized into a
   [`ChannelMessage`](https://docs.rs/provider-core) and delivered to the
   [`ProviderEvents`](https://docs.rs/provider-core) sink you supplied.
-  * `id` = `"<update_id>/<message_id>"`, `channel = "telegram"`
-  * `sender` from `from{id, first_name, username}`
-  * `content` = message text (caption surfaces as text when there is no body)
-  * `reply_target` = `reply_to_message.message_id`
-  * `ts` = `date * 1000` (epoch millis), `raw` = full update JSON
-  * media (photo/document/voice/audio/video/sticker) → `attachments`
-* **Outbound** — [`ChatProvider::send`] → `sendMessage` →
+  - `id` = `"<update_id>/<message_id>"`, `channel = "telegram"`
+  - `sender` from `from{id, first_name, username}`
+  - `content` = message text (caption surfaces as text when there is no body)
+  - `reply_target` = `reply_to_message.message_id`
+  - `ts` = `date * 1000` (epoch millis), `raw` = full update JSON
+  - media (photo/document/voice/audio/video/sticker) → `attachments`
+- **Outbound** — [`ChatProvider::send`] → `sendMessage` →
   [`SendReceipt`](https://docs.rs/provider-core)`{message_id, ts}`; `reply_to`
   maps to `reply_to_message_id`.
-* **Errors** — HTTP 401 → `ProviderError::Auth` (fatal, polling stops), 409 →
+- **Errors** — HTTP 401 → `ProviderError::Auth` (fatal, polling stops), 409 →
   `Protocol` (conflicting long-poll, fatal), 429 → `RateLimit` honoring
   `parameters.retry_after`, network failures → `Network` (transient, retried
   with capped exponential backoff). The last error is inspectable via
@@ -51,21 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Configuration (builder)
 
-| Method | Default | Purpose |
-|---|---|---|
-| `with_base_url` | `https://api.telegram.org` | API base (self-hosted bot API / tests) |
-| `with_poll_interval` | `1 s` | idle delay between `getUpdates` rounds |
-| `with_long_poll_timeout_secs` | `30` | `getUpdates` `timeout` parameter |
-| `with_request_timeout` | `60 s` | per-request HTTP timeout |
+| Method                        | Default                    | Purpose                                |
+| ----------------------------- | -------------------------- | -------------------------------------- |
+| `with_base_url`               | `https://api.telegram.org` | API base (self-hosted bot API / tests) |
+| `with_poll_interval`          | `1 s`                      | idle delay between `getUpdates` rounds |
+| `with_long_poll_timeout_secs` | `30`                       | `getUpdates` `timeout` parameter       |
+| `with_request_timeout`        | `60 s`                     | per-request HTTP timeout               |
 
 ## Notes
 
-* The update offset cursor persists in-process across `start()`/`stop()` cycles;
-  it is advanced *after* a message is dispatched to the events sink so a crash
+- The update offset cursor persists in-process across `start()`/`stop()` cycles;
+  it is advanced _after_ a message is dispatched to the events sink so a crash
   between delivery and ack re-delivers instead of dropping.
-* `send()` is text-only (`sendMessage`); attachments are logged and ignored.
+- `send()` is text-only (`sendMessage`); attachments are logged and ignored.
   Media outbound is a future milestone (`sendPhoto`/`sendDocument`).
-* Telegram file URLs require a `getFile` round-trip; file ids are preserved in
+- Telegram file URLs require a `getFile` round-trip; file ids are preserved in
   `ChannelMessage::raw` for the transport.
 
 ## Tests
