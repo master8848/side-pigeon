@@ -37,17 +37,25 @@ Config file form: `{"providers": [{"id": "telegram", "config": {"token": "..."}}
 ## Install
 
 Copy the extension into Prime Agent's auto-discovery directory. Discovery
-takes direct files (`extensions/*.ts`) or `extensions/<dir>/index.ts`, so
-install as a direct file:
+takes direct files (`extensions/*.ts`) or `extensions/<dir>/index.ts`.
+
+Preferred (multi-file):
+
+```bash
+cp -R plugins/pi-plugin/extension/provider-connect ~/.prime/agent/extensions/provider-connect
+```
+
+Legacy single-file shim (still works):
 
 ```bash
 cp plugins/pi-plugin/extension/provider-connect.ts ~/.prime/agent/extensions/provider-connect.ts
 ```
 
-or, for a quick test without copying:
+Quick test without copying:
 
 ```bash
-prime-agent -e ./plugins/pi-plugin/extension/provider-connect.ts
+prime-agent -e ./plugins/pi-plugin/extension/provider-connect/index.ts
+# legacy shim also accepts: prime-agent -e ./plugins/pi-plugin/extension/provider-connect.ts
 ```
 
 The extension has **zero npm dependencies**: `@earendil-works/pi-coding-agent`
