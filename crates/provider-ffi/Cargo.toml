@@ -9,11 +9,19 @@ description = "FFI cdylib for Bun bun:ffi dlopen fast path (phase 08)"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
-persist = []
+default = ["demo"]
+demo = []
+telegram = ["dep:provider-telegram"]
+discord = ["dep:provider-discord"]
+persist = ["provider-transport/persist", "provider-core/registry"]
 
 [dependencies]
 provider-core = { path = "../provider-core" }
+provider-config = { path = "../provider-config", optional = true }
+provider-transport = { path = "../provider-transport", optional = true }
+provider-telegram = { path = "../provider-telegram", optional = true }
+provider-discord = { path = "../provider-discord", optional = true }
+async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
