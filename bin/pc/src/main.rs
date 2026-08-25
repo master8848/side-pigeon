@@ -103,6 +103,12 @@ enum Commands {
         /// Watch pc.config.* for changes (polls every 1s; hot-reload stub)
         #[arg(long)]
         watch: bool,
+        /// SQLite file for durable event log (enables replay via ?since=)
+        #[arg(long, value_name = "PATH")]
+        persist: Option<String>,
+        /// Disable SQLite persistence (stay in-memory even with persist feature)
+        #[arg(long)]
+        no_persist: bool,
     },
     /// Dev server — alias for `serve --watch` (Rsbuild analog)
     Dev {
@@ -112,6 +118,12 @@ enum Commands {
         /// HTTP listen address (e.g. :8788 or 127.0.0.1:8788)
         #[arg(long, value_name = "ADDR")]
         http: Option<String>,
+        /// SQLite file for durable event log
+        #[arg(long, value_name = "PATH")]
+        persist: Option<String>,
+        /// Disable SQLite persistence
+        #[arg(long)]
+        no_persist: bool,
     },
     /// Scaffold a new provider-connect config (stub)
     Init,
@@ -156,8 +168,33 @@ fn main() -> ExitCode {
             json,
             config: config_path,
         }),
-        Some(Commands::Serve { ws, http, watch }) => run_serve(config_path, ws, http, watch),
-        Some(Commands::Dev { ws, http }) => run_serve(config_path, ws, http, true),
+        Some(Commands::Serve {
+            ws,
+            http,
+            watch,
+            persist,
+            no_persist,
+        }) => run_serve(ServeArgs {
+            config_path,
+            ws,
+            http,
+            watch,
+            persist,
+            no_persist,
+        }),
+        Some(Commands::Dev {
+            ws,
+            http,
+            persist,
+            no_persist,
+        }) => run_serve(ServeArgs {
+            config_path,
+            ws,
+            http,
+            watch: true,
+            persist,
+            no_persist,
+        }),
         Some(Commands::Init) => run_init(),
     }
 }
@@ -301,6 +338,15 @@ fn build_app_state_with_transports(
     register_providers(config, state.registry_mut(), &events).map_err(|e| e)?;
     drop(events);
     Ok((state, notify_tx))
+}
+
+struct ServeArgs {
+    config_path: Option<String>,
+    ws: Option<String>,
+    http: Option<String>,
+    watch: bool,
+    persist: Option<String>,
+    no_persist: bool,
 }
 
 /// Convenience helper returning just the registry (spec name).
@@ -1009,12 +1055,15 @@ fn parse_listen_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
         .map_err(|e| format!("invalid listen addr {raw:?}: {e} (try :8788 or 127.0.0.1:8788)"))
 }
 
-fn run_serve(
-    config_path: Option<String>,
-    ws: Option<String>,
-    http: Option<String>,
-    watch: bool,
-) -> ExitCode {
+fn run_serve(args: ServeArgs) -> ExitCode {
+    let ServeArgs {
+        config_path,
+        ws,
+        http,
+        watch,
+        persist,
+        no_persist,
+    } = args;
     init_tracing();
     let (ws_addr, http_addr) = match (ws, http) {
         (None, None) => (Some(":8787".to_string()), Some(":8788".to_string())),
@@ -1033,13 +1082,56 @@ fn run_serve(
         }
     };
     let mut transports: Vec<String> = Vec::new();
-    if ws_addr.is_some() { transports.push("ws".to_string()); }
-    if http_addr.is_some() { transports.push("http".to_string()); }
-    if !transports.contains(&"stdio".to_string()) { transports.push("stdio".to_string()); }
+    if ws_addr.is_some() {
+        transports.push("ws".to_string());
+    }
+    if http_addr.is_some() {
+        transports.push("http".to_string());
+    }
+    if !transports.contains(&"stdio".to_string()) {
+        transports.push("stdio".to_string());
+    }
     let (state, notify_tx) = match build_app_state_with_transports(&config, transports) {
         Ok(v) => v,
-        Err(e) => { eprintln!("pc: {e}"); return ExitCode::FAILURE; }
+        Err(e) => {
+            eprintln!("pc: {e}");
+            return ExitCode::FAILURE;
+        }
     };
+    // Wire SQLite persistence when available and not disabled.
+    #[allow(unused_mut)]
+    let mut state = state;
+    #[cfg(feature = "persist")]
+    {
+        if no_persist {
+            tracing::info!("persist disabled via --no-persist (in-memory only)");
+        } else {
+            let path = persist
+                .or_else(|| std::env::var("PC_PERSIST_PATH").ok())
+                .unwrap_or_else(|| "./pc-events.db".to_string());
+            match state.with_persist(&path) {
+                Ok(s) => {
+                    tracing::info!(path = %path, "persist enabled (WAL sqlite)");
+                    eprintln!("persist: sqlite at {}", path);
+                    state = s;
+                }
+                Err(e) => {
+                    eprintln!("pc: persist failed for {}: {e}", path);
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "persist"))]
+    {
+        if persist.is_some() {
+            eprintln!("pc: --persist requires building with --features persist");
+            return ExitCode::FAILURE;
+        }
+        if std::env::var("PC_PERSIST_PATH").is_ok() {
+            eprintln!("pc: PC_PERSIST_PATH set but binary built without --features persist — ignoring");
+        }
+    }
     tracing::info!(providers = ?state.registry().ids(), "providers registered for serve");
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
