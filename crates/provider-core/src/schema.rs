@@ -90,6 +90,10 @@ pub mod base64_bytes {
     use base64::Engine as _;
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
+    const MAX_DECODED_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+    // Base64 expands by 4/3; allow small padding overhead.
+    const MAX_ENCODED_LEN: usize = MAX_DECODED_BYTES * 4 / 3 + 4;
+
     /// Serialize bytes as a base64 string (`null` when absent).
     pub fn serialize<S>(data: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -107,10 +111,24 @@ pub mod base64_bytes {
         D: Deserializer<'de>,
     {
         match Option::<String>::deserialize(deserializer)? {
-            Some(encoded) => STANDARD
-                .decode(&encoded)
-                .map(Some)
-                .map_err(|e| D::Error::custom(format!("invalid base64 data: {e}"))),
+            Some(encoded) => {
+                if encoded.len() > MAX_ENCODED_LEN {
+                    return Err(D::Error::custom(format!(
+                        "base64 data too large: encoded length {} exceeds 5 MiB limit",
+                        encoded.len()
+                    )));
+                }
+                let decoded = STANDARD
+                    .decode(&encoded)
+                    .map_err(|e| D::Error::custom(format!("invalid base64 data: {e}")))?;
+                if decoded.len() > MAX_DECODED_BYTES {
+                    return Err(D::Error::custom(format!(
+                        "base64 data too large: decoded {} bytes exceeds 5 MiB limit",
+                        decoded.len()
+                    )));
+                }
+                Ok(Some(decoded))
+            }
             None => Ok(None),
         }
     }
