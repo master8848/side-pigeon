@@ -35,6 +35,7 @@
 pub mod error;
 pub mod events;
 pub mod jsonrpc;
+pub mod persist;
 pub mod state;
 pub mod stdio;
 

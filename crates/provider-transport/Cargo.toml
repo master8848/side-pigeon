@@ -13,6 +13,9 @@ stdio = []
 ws = ["dep:tokio-tungstenite", "dep:futures-util"]
 # Optional minimal HTTP/1.1 server (hand-rolled on hyper). Off by default.
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes", "dep:futures-util"]
+# Optional at-least-once replay via SQLite (WAL). Off by default; pulled in
+# automatically by `pc` with `--features persist`. Library embeds stay lean.
+persist = ["dep:rusqlite"]
 
 [dependencies]
 provider-core = { path = "../provider-core" }
@@ -29,6 +32,8 @@ hyper = { version = "1", default-features = false, features = ["server", "http1"
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 http-body-util = { version = "0.1", optional = true }
 bytes = { version = "1", optional = true }
+# Optional persistence (only when `persist` feature enabled)
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
