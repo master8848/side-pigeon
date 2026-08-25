@@ -111,7 +111,42 @@ struct CheckArgs {
     config: Option<String>,
 }
 
+fn which_pc() -> Result<std::path::PathBuf, String> {
+    let path = std::env::var_os("PATH").ok_or("no PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("pc");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        // Windows extension
+        let candidate_exe = dir.join("pc.exe");
+        if candidate_exe.is_file() {
+            return Ok(candidate_exe);
+        }
+    }
+    Err("pc not found on PATH".into())
+}
+
 fn main() -> ExitCode {
+    // Shim for Phase 04: pc-connect is now `pc send/listen/check`. Keep
+    // this binary working for one release but nudge users to the single
+    // `pc` binary. If `pc` is on PATH we delegate to it (best-effort).
+    if std::env::var_os("PC_CONNECT_QUIET_DEPRECATION").is_none() {
+        eprintln!(
+            "pc-connect: deprecated — use `pc send` / `pc listen` / `pc check` instead (single `pc` binary, Phase 04); pc-connect will be removed in a future release"
+        );
+    }
+    if let Ok(pc_bin) = which_pc() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if matches!(
+            args.first().map(|s| s.as_str()),
+            Some("send") | Some("listen") | Some("check")
+        ) {
+            if let Ok(status) = std::process::Command::new(&pc_bin).args(&args).status() {
+                return ExitCode::from(status.code().unwrap_or(1) as u8);
+            }
+        }
+    }
     match parse_args(std::env::args().skip(1).collect()) {
         Err(message) => {
             eprintln!("pc-connect: {message}");
