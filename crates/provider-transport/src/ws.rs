@@ -3,16 +3,47 @@
 //! One JSON document per text message. Notifications from providers fan out
 //! to every connected client via the broadcast channel. A `shutdown` request
 //! closes the connection that issued it (the server keeps accepting others).
+//!
+//! # Security note — TLS
+//! Plaintext WebSockets here are **localhost-only** by design. Production
+//! deployments MUST place a reverse-proxy (nginx, Caddy, Fly, etc.) in front
+//! that terminates TLS (wss://) and enforces authentication. Do not expose
+//! the raw listener directly to the public internet.
 
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex, Semaphore};
 
 use crate::error::TransportError;
 use crate::jsonrpc::parse_request;
 use crate::state::{dropped_frames_notification, AppState, DispatchOutcome, Outbound};
+
+fn is_allowed_ws_origin(origin: &str) -> bool {
+    // Allow only loopback origins for WebSocket upgrades.
+    origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]")
+}
+
+fn ws_origin_callback(
+    req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+    resp: tokio_tungstenite::tungstenite::handshake::server::Response,
+) -> Result<
+    tokio_tungstenite::tungstenite::handshake::server::Response,
+    tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+> {
+    if let Some(origin) = req.headers().get("origin").and_then(|v| v.to_str().ok()) {
+        if !is_allowed_ws_origin(origin) {
+            // 403 rejection: handshake callback error produces an HTTP error response
+            let err = tokio_tungstenite::tungstenite::http::Response::builder()
+                .status(tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN)
+                .body(Some("forbidden origin".to_string()))
+                .expect("valid 403 response");
+            return Err(err);
+        }
+    }
+    Ok(resp)
+}
 
 /// Accept WebSocket connections on `listener` and serve JSON-RPC over them.
 pub async fn serve_ws(
@@ -20,11 +51,24 @@ pub async fn serve_ws(
     notify_tx: broadcast::Sender<Outbound>,
     listener: TcpListener,
 ) -> Result<(), TransportError> {
+    const MAX_CONNECTIONS: usize = 256;
+    let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    // TODO(idle-timeout): enforce idle timeout on WebSocket connections (e.g.
+    // `tokio::time::timeout` around read loops / ping interval) to reclaim
+    // idle or half-open sockets. Currently relies on TCP keepalive + peer close.
     loop {
         let (stream, peer) = listener.accept().await?;
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(peer = %peer, "ws connection limit reached (256), dropping");
+                continue;
+            }
+        };
         let state = state.clone();
         let notify_tx = notify_tx.clone();
         tokio::spawn(async move {
+            let _permit = permit; // held for connection lifetime
             if let Err(e) = handle_connection(state, notify_tx, stream).await {
                 tracing::warn!(peer = %peer, error = %e, "ws connection error");
             }
@@ -57,7 +101,7 @@ async fn handle_connection(
     notify_tx: broadcast::Sender<Outbound>,
     stream: TcpStream,
 ) -> Result<(), TransportError> {
-    let websocket = tokio_tungstenite::accept_async(stream).await?;
+    let websocket = tokio_tungstenite::accept_hdr_async(stream, ws_origin_callback).await?;
     let (mut sink, mut source) = websocket.split();
 
     // Per-connection outbound queue: responses (this handler) + notifications
