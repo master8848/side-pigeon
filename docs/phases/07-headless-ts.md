@@ -1,6 +1,6 @@
 # Phase 07 — Headless TS core (`@provider-connect/core`)
 
-**Lens:** TankStack + Bun · **Status:** planned
+**Lens:** TankStack + Bun · **Status:** **done** — implemented but doc was drifted; verified in crates/provider-config, bin/pc clap, provider-core client/plugin, provider-transport http/ws, packages/core
 
 ## Why
 

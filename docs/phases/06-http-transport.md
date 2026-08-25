@@ -1,6 +1,6 @@
 # Phase 06 — HTTP transport + `pc serve` (Route Handlers)
 
-**Lens:** Next.js · **Status:** planned
+**Lens:** Next.js · **Status:** **done** — implemented but doc was drifted; verified in crates/provider-config, bin/pc clap, provider-core client/plugin, provider-transport http/ws, packages/core
 
 ## Why
 

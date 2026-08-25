@@ -1,6 +1,6 @@
 # Phase 04 — Single `pc` binary with subcommands
 
-**Lens:** Rspack / Bun · **Status:** planned
+**Lens:** Rspack / Bun · **Status:** **done** — implemented but doc was drifted; verified in crates/provider-config, bin/pc clap, provider-core client/plugin, provider-transport http/ws, packages/core
 
 ## Why
 

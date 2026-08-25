@@ -1,6 +1,6 @@
 # Phase 03 — Unified provider-config crate
 
-**Lens:** Rspack / Rsbuild + Next.js · **Status:** planned
+**Lens:** Rspack / Rsbuild + Next.js · **Status:** **done** — implemented but doc was drifted; verified in crates/provider-config, bin/pc clap, provider-core client/plugin, provider-transport http/ws, packages/core
 
 ## Why
 

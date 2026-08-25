@@ -1,6 +1,6 @@
 # Phase 05 — Typed EventBus + Plugin pipeline
 
-**Lens:** TankStack · **Status:** planned
+**Lens:** TankStack · **Status:** **done** — implemented but doc was drifted; verified in crates/provider-config, bin/pc clap, provider-core client/plugin, provider-transport http/ws, packages/core
 
 ## Why
 
