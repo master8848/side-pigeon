@@ -46,7 +46,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, Stream, StreamExt};
-use provider_core::{ChatProvider, ProviderError, ProviderEvents, SendMessage, SendReceipt};
+use provider_core::{
+    ChatProvider, ProviderError, ProviderEvents, SendMessage, SendReceipt,
+    TRANSIENT_ERROR_EVENT_THRESHOLD,
+};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -132,7 +135,13 @@ impl DiscordProvider {
             gateway_url: "wss://gateway.discord.gg/?v=10&encoding=json".to_string(),
             rest_base: "https://discord.com/api/v10".to_string(),
             intents: DEFAULT_INTENTS,
-            client: reqwest::Client::new(),
+            // Default REST timeout mirrors telegram's 60 s (the review flagged
+            // discord's reqwest::Client::new() no-timeout behavior).
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .expect("reqwest client build cannot fail"),
+
             events,
             session: Arc::new(Mutex::new(None)),
             guilds: Arc::new(Mutex::new(HashMap::new())),
@@ -256,6 +265,26 @@ impl DiscordProvider {
     // Gateway task
     // ------------------------------------------------------------------
 
+    /// Classify a gateway close code: `None` = reconnectable, `Some(reason)` =
+    /// fatal (do not reconnect — retrying cannot succeed).
+    ///
+    /// Reconnectable: 1000/1001 (clean), 1006 (abnormal), 1012 (server
+    /// restart), 4000-4003, 4005-4009 (unknown/decode/auth-order/seq/ratelimit/
+    /// timeout). Fatal: 4004 (auth failed) and 4010-4014 (invalid shard,
+    /// sharding required, invalid API version, invalid intents, disallowed
+    /// intents) — all misconfiguration, per Discord gateway docs §Close Event.
+    fn classify_close(code: u16) -> Option<&'static str> {
+        match code {
+            4004 => Some("authentication failed"),
+            4010 => Some("invalid shard"),
+            4011 => Some("sharding required"),
+            4012 => Some("invalid API version"),
+            4013 => Some("invalid intents"),
+            4014 => Some("disallowed intents"),
+            _ => None,
+        }
+    }
+
     /// Long-running gateway loop: (re)connect, resume/identify, heartbeat,
     /// dispatch, reconnect with capped backoff until shutdown or fatal error.
     async fn gateway_task(provider: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
@@ -268,12 +297,27 @@ impl DiscordProvider {
                 RunOutcome::Shutdown => break,
                 RunOutcome::Fatal(e) => {
                     error!(error = %e, "discord gateway stopped (fatal)");
-                    *provider.last_error.lock().unwrap() = Some(e);
+                    *provider.last_error.lock().unwrap() = Some(e.clone());
+                    // Fatal gateway errors (close 4004/4010-4014, auth) were
+                    // invisible to hosts — emit the async error event first.
+                    provider.events.on_error(provider.id(), &e);
                     break;
                 }
                 RunOutcome::Reconnect { healthy } => {
                     if healthy {
                         attempt = 0;
+                    } else {
+                        attempt += 1;
+                        // Persistent degradation signal (like telegram): tell
+                        // the host once the gateway has been failing a while.
+                        if attempt == TRANSIENT_ERROR_EVENT_THRESHOLD {
+                            provider.events.on_error(
+                                provider.id(),
+                                &ProviderError::Network(format!(
+                                    "gateway reconnecting after {attempt} failed attempts"
+                                )),
+                            );
+                        }
                     }
                     let wait = if healthy {
                         Duration::from_millis(250)
@@ -284,9 +328,6 @@ impl DiscordProvider {
                     tokio::select! {
                         _ = tokio::time::sleep(wait) => {}
                         _ = shutdown.changed() => break,
-                    }
-                    if !healthy {
-                        attempt += 1;
                     }
                 }
             }
@@ -479,15 +520,28 @@ impl DiscordProvider {
                         WsMessage::Ping(data) => {
                             let _ = sink.send(WsMessage::Pong(data)).await;
                         }
-                        WsMessage::Close(Some(frame)) if u16::from(frame.code) == 4004 => {
-                            // Authentication failed.
-                            return RunOutcome::Fatal(ProviderError::Auth(format!(
-                                "gateway close 4004: {}",
-                                frame.reason
-                            )));
+                        WsMessage::Close(Some(frame)) => {
+                            let code = u16::from(frame.code);
+                            match Self::classify_close(code) {
+                                Some(fatal) => {
+                                    // 4004 auth failed; 4010 invalid shard;
+                                    // 4011 sharding required; 4012 invalid API
+                                    // version; 4013 invalid intents; 4014
+                                    // disallowed intents — retrying can never
+                                    // succeed (misconfiguration), so stop.
+                                    return RunOutcome::Fatal(ProviderError::Auth(format!(
+                                        "gateway close {code} ({fatal}): {}",
+                                        frame.reason
+                                    )));
+                                }
+                                None => {
+                                    debug!(code, reason = %frame.reason, "gateway closed");
+                                    return RunOutcome::Reconnect { healthy };
+                                }
+                            }
                         }
-                        WsMessage::Close(frame) => {
-                            debug!(code = ?frame.as_ref().map(|f| f.code), "gateway closed");
+                        WsMessage::Close(None) => {
+                            debug!("gateway closed (no close frame)");
                             return RunOutcome::Reconnect { healthy };
                         }
                         _ => {}

@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::error::TransportError;
 use crate::jsonrpc::parse_request;
-use crate::state::{AppState, DispatchOutcome, Outbound};
+use crate::state::{dropped_frames_notification, AppState, DispatchOutcome, Outbound};
 
 /// Accept WebSocket connections on `listener` and serve JSON-RPC over them.
 pub async fn serve_ws(
@@ -32,6 +32,26 @@ pub async fn serve_ws(
     }
 }
 
+/// Push an outbound frame onto the connection queue. Returns `Ok(true)` on
+/// success and `Ok(false)` (closing the connection) when the client is too
+/// slow and the queue is full — bounded memory, honest backpressure.
+async fn queue_or_close(
+    out_tx: &mpsc::Sender<Outbound>,
+    frame: Outbound,
+) -> Result<bool, TransportError> {
+    match out_tx.try_send(frame) {
+        Ok(()) => Ok(true),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::warn!("ws outbound queue full; closing slow client");
+            let _ = out_tx
+                .send(Outbound::Notification(dropped_frames_notification(0)))
+                .await;
+            Ok(false)
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => Ok(false),
+    }
+}
+
 async fn handle_connection(
     state: Arc<Mutex<AppState>>,
     notify_tx: broadcast::Sender<Outbound>,
@@ -42,8 +62,10 @@ async fn handle_connection(
 
     // Per-connection outbound queue: responses (this handler) + notifications
     // (forwarded from the broadcast) are merged here so only the writer task
-    // touches the socket.
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Outbound>();
+    // touches the socket. Bounded so a slow client cannot grow memory without
+    // bound; on overflow the connection is closed with an honest event.error.
+    const OUT_QUEUE_CAPACITY: usize = 1024;
+    let (out_tx, mut out_rx) = mpsc::channel::<Outbound>(OUT_QUEUE_CAPACITY);
 
     let mut bcast_rx = notify_tx.subscribe();
     let forward_tx = out_tx.clone();
@@ -51,11 +73,21 @@ async fn handle_connection(
         loop {
             match bcast_rx.recv().await {
                 Ok(Outbound::Notification(n)) => {
-                    let _ = forward_tx.send(Outbound::Notification(n));
+                    if forward_tx.send(Outbound::Notification(n)).await.is_err() {
+                        break; // client connection went away
+                    }
                 }
                 Ok(Outbound::Response(_)) => {}
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     tracing::warn!(skipped, "ws notification forwarder lagged");
+                    // Honest signal: tell this client it missed frames.
+                    if forward_tx
+                        .send(Outbound::Notification(dropped_frames_notification(skipped)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -87,14 +119,18 @@ async fn handle_connection(
                             DispatchOutcome::Ignore => (None, false),
                         };
                         if let Some(response) = response {
-                            let _ = out_tx.send(Outbound::Response(response));
+                            if !queue_or_close(&out_tx, Outbound::Response(response)).await? {
+                                break;
+                            }
                         }
                         if shutdown {
                             break;
                         }
                     }
                     Err(response) => {
-                        let _ = out_tx.send(Outbound::Response(*response));
+                        if !queue_or_close(&out_tx, Outbound::Response(*response)).await? {
+                            break;
+                        }
                     }
                 }
             }

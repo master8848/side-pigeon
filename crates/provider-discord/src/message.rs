@@ -76,33 +76,6 @@ pub(crate) fn snowflake_ts(id: &str) -> Option<i64> {
     Some((n >> 22) as i64 + DISCORD_EPOCH_MS)
 }
 
-/// Days since 1970-01-01 for a proleptic-Gregorian date (Hinnant algorithm).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400; // [0, 399]
-    let mp = (m + 9) % 12; // Mar=0, ..., Feb=11
-    let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    era * 146097 + doe - 719468
-}
-
-/// Parse a Discord ISO-8601 timestamp (`2024-01-01T12:34:56.789000+00:00`).
-/// Fallback only — MESSAGE_CREATE always carries a snowflake id.
-fn iso_ts(s: &str) -> Option<i64> {
-    if s.len() < 19 {
-        return None;
-    }
-    let y: i64 = s.get(0..4)?.parse().ok()?;
-    let mo: i64 = s.get(5..7)?.parse().ok()?;
-    let d: i64 = s.get(8..10)?.parse().ok()?;
-    let h: i64 = s.get(11..13)?.parse().ok()?;
-    let mi: i64 = s.get(14..16)?.parse().ok()?;
-    let se: i64 = s.get(17..19)?.parse().ok()?;
-    let days = days_from_civil(y, mo, d);
-    Some((days * 86_400 + h * 3_600 + mi * 60 + se) * 1000)
-}
-
 fn media_kind(mime: Option<&str>, filename: &str) -> MediaKind {
     match mime {
         Some(m) if m.starts_with("image/") => MediaKind::Image,
@@ -168,9 +141,10 @@ pub fn parse_message_create(
         .message_reference
         .as_ref()
         .and_then(|r| r.message_id.clone());
-    let ts = snowflake_ts(&m.id)
-        .or_else(|| m.timestamp.as_deref().and_then(iso_ts))
-        .unwrap_or(0);
+    // Snowflake ids embed a millisecond timestamp and are authoritative for
+    // MESSAGE_CREATE; the ISO-8601 fallback (hand-rolled civil-date math) was
+    // removed per review — snowflake parsing is the single source of truth.
+    let ts = snowflake_ts(&m.id).unwrap_or(0);
 
     Some(ChannelMessage {
         id: m.id.clone(),
@@ -270,11 +244,9 @@ mod tests {
         assert!(matches!(msg.attachments[1].kind, MediaKind::File));
         assert!(msg.raw.is_some());
 
-        // snowflake ts: id >> 22 + 1420070400000
+        // snowflake ts: id >> 22 + 1420070400000 (authoritative; the ISO
+        // fallback was removed — see review)
         assert_eq!(msg.ts, snowflake_ts("1196552072724480000").unwrap());
-        // iso fallback agrees with snowflake within the same second
-        let iso = iso_ts("2024-01-15T20:30:45.123000+00:00").unwrap();
-        assert!((msg.ts - iso).abs() < 1000);
     }
 
     #[test]
@@ -291,15 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn snowflake_and_iso_timestamps() {
+    fn snowflake_timestamps() {
         assert_eq!(snowflake_ts("175928847299117063"), Some(1_462_015_105_796));
-        assert_eq!(
-            iso_ts("2015-01-01T00:00:00.000000+00:00"),
-            Some(1_420_070_400_000)
-        );
-        assert_eq!(
-            iso_ts("2024-01-15T20:30:45.123000+00:00"),
-            Some(1_705_350_645_000)
-        );
+        assert_eq!(snowflake_ts("not-a-snowflake"), None);
     }
 }

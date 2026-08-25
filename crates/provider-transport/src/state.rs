@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
+use crate::events::ErrorEvent;
 use provider_core::{ChannelMessage, ProviderError, ProviderEvents, ProviderRegistry, SendMessage};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
-use crate::events::{EVENT_CHOICE, EVENT_DRAFT, EVENT_ERROR, EVENT_MESSAGE};
+use crate::events::{EVENT_ERROR, EVENT_MESSAGE};
 use crate::jsonrpc::{JsonRpcError, Notification, Request, Response, JSONRPC_VERSION};
 
 /// Broadcast channel capacity for outgoing frames (responses + notifications).
@@ -142,8 +143,11 @@ impl AppState {
         json!({
             "protocolVersion": self.protocol_version,
             "methods": ["initialize", "capabilities", "listen", "send", "shutdown"],
-            "notifications": [EVENT_MESSAGE, EVENT_DRAFT, EVENT_CHOICE, EVENT_ERROR],
-            "features": ["send", "draft", "choice"],
+            // Only emit event.message + event.error today; draft/choice are
+            // reserved vocabulary but not implemented, so they must not be
+            // advertised (the contract must not lie to clients).
+            "notifications": [EVENT_MESSAGE, EVENT_ERROR],
+            "features": ["send"],
             "transport": self.transport,
             "providers": self.registry.ids(),
         })
@@ -241,4 +245,37 @@ impl ProviderEvents for NotifyEvents {
             tracing::debug!(error = %err, "dropping event.message (no receivers)");
         }
     }
+
+    fn on_error(&self, provider: &str, error: &ProviderError) {
+        let notification = error_notification(provider, error);
+        if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
+            tracing::debug!(error = %err, "dropping event.error (no receivers)");
+        }
+    }
+}
+
+/// Build the `event.error` notification for a provider error, reusing the
+/// JSON-RPC error-code mapping from [`provider_error`] so hosts see the same
+/// `code`/`kind` vocabulary as request errors.
+pub fn error_notification(provider: &str, error: &ProviderError) -> Notification {
+    let code = provider_error(error.clone()).code;
+    let event = ErrorEvent {
+        provider: Some(provider.to_string()),
+        code,
+        message: error.to_string(),
+        data: Some(serde_json::json!({ "kind": error.kind() })),
+    };
+    Notification::error(&event)
+}
+
+/// The `event.error` notification emitted when the transport itself had to
+/// drop frames (client too slow / disconnected): honest backpressure signal.
+pub fn dropped_frames_notification(skipped: u64) -> Notification {
+    let event = ErrorEvent {
+        provider: None,
+        code: -32006, // transport-level, outside the provider mapping range
+        message: format!("transport dropped {skipped} outbound frame(s) (client lag)"),
+        data: Some(serde_json::json!({ "kind": "Transport", "skipped": skipped })),
+    };
+    Notification::error(&event)
 }

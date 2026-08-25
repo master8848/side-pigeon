@@ -5,6 +5,10 @@ use async_trait::async_trait;
 use crate::schema::{ChannelMessage, SendMessage, SendReceipt};
 use crate::ProviderError;
 
+/// How many consecutive transient failures before a provider emits
+/// `on_error` for a still-running (non-fatal) connection.
+pub const TRANSIENT_ERROR_EVENT_THRESHOLD: u32 = 10;
+
 /// A chat provider: one messaging platform connection.
 ///
 /// Lifecycle: construct → [`start`](ChatProvider::start) (called by `listen`)
@@ -32,4 +36,16 @@ pub trait ChatProvider: Send + Sync {
 pub trait ProviderEvents: Send + Sync {
     /// A new inbound message arrived.
     fn on_message(&self, msg: ChannelMessage);
+
+    /// An asynchronous provider error occurred.
+    ///
+    /// Called with a **fatal** error right before the provider stops (e.g.
+    /// Telegram HTTP 401/409, Discord gateway close 4004/4010-4014) and with
+    /// a persistent transient error once a connection has failed
+    /// [`TRANSIENT_ERROR_EVENT_THRESHOLD`] times in a row (so hosts see
+    /// sustained degradation instead of silence). The default is a no-op;
+    /// the transport sink implements it by emitting `event.error`.
+    fn on_error(&self, provider: &str, error: &ProviderError) {
+        let _ = (provider, error);
+    }
 }

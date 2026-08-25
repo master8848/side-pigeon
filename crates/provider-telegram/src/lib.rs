@@ -41,7 +41,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use provider_core::{
     ChannelMessage, ChatProvider, ContentPart, MediaAttachment, MediaKind, ProviderError,
-    ProviderEvents, SendMessage, SendReceipt, Sender,
+    ProviderEvents, SendMessage, SendReceipt, Sender, TRANSIENT_ERROR_EVENT_THRESHOLD,
 };
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -292,7 +292,14 @@ fn retry_after(text: &str) -> Option<Duration> {
 
 fn backoff(base: Duration, consecutive_errors: u32) -> Duration {
     let mult = 2u32.saturating_pow(consecutive_errors.min(6));
-    base.saturating_mul(mult).min(Duration::from_secs(30))
+    let base_wait = base.saturating_mul(mult).min(Duration::from_secs(30));
+    // Deterministic jitter (0..=200 ms) so a fleet of bots polling the same
+    // provider does not retry in lockstep (Telegram 409/429 storm mitigation).
+    let jitter_ms = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() % 201)
+        .unwrap_or(0)) as u32;
+    base_wait + Duration::from_millis(jitter_ms.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -494,8 +501,14 @@ impl TelegramProvider {
                     tokio::time::sleep(provider.poll_interval).await;
                 }
                 Err(PollFailure::Retry { error, after }) => {
-                    *provider.last_error.lock().unwrap() = Some(error);
+                    *provider.last_error.lock().unwrap() = Some(error.clone());
                     consecutive_errors += 1;
+                    // Persistent degradation signal: tell the host once the
+                    // connection has been failing for a while (not on every
+                    // transient blip).
+                    if consecutive_errors == TRANSIENT_ERROR_EVENT_THRESHOLD {
+                        provider.events.on_error(provider.id(), &error);
+                    }
                     let wait = after
                         .unwrap_or_else(|| backoff(provider.poll_interval, consecutive_errors));
                     debug!(
@@ -506,7 +519,10 @@ impl TelegramProvider {
                 }
                 Err(PollFailure::Fatal(error)) => {
                     error!(error = %error, "telegram polling stopped (fatal error)");
-                    *provider.last_error.lock().unwrap() = Some(error);
+                    *provider.last_error.lock().unwrap() = Some(error.clone());
+                    // The host only sees silence otherwise — 401/409 kills the
+                    // poll loop invisibly. Emit the async error event first.
+                    provider.events.on_error(provider.id(), &error);
                     break;
                 }
             }

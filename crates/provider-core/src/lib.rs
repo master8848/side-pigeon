@@ -40,7 +40,7 @@ pub use error::ProviderError;
 pub use schema::{
     ChannelMessage, ContentPart, MediaAttachment, MediaKind, SendMessage, SendReceipt, Sender,
 };
-pub use traits::{ChatProvider, ProviderEvents};
+pub use traits::{ChatProvider, ProviderEvents, TRANSIENT_ERROR_EVENT_THRESHOLD};
 
 #[cfg(feature = "registry")]
 pub use registry::ProviderRegistry;

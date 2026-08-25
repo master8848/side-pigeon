@@ -184,4 +184,10 @@ impl ProviderRegistry {
     pub fn dispatch_message(&self, msg: ChannelMessage) {
         self.events.on_message(msg);
     }
+
+    /// Forward an asynchronous provider error to the shared event sink
+    /// (emitted as `event.error` by the transport).
+    pub fn dispatch_error(&self, provider: &str, error: &ProviderError) {
+        self.events.on_error(provider, error);
+    }
 }

@@ -5,7 +5,7 @@ use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::error::TransportError;
 use crate::jsonrpc::parse_request;
-use crate::state::{AppState, DispatchOutcome, Outbound};
+use crate::state::{dropped_frames_notification, AppState, DispatchOutcome, Outbound};
 
 /// Serve JSON-RPC 2.0 over `stdin`/`stdout`, one JSON document per line.
 ///
@@ -87,7 +87,14 @@ async fn write_loop<W: AsyncWrite + Unpin>(
                 writer.flush().await?;
             }
             Err(RecvError::Lagged(skipped)) => {
+                // The client did not read fast enough and frames were dropped.
+                // Emit an honest event.error so hosts can react (the writer owns
+                // stdout, so it writes the synthetic notification directly).
                 tracing::warn!(skipped, "stdio writer lagged; dropped frames");
+                let text = serde_json::to_string(&dropped_frames_notification(skipped))?;
+                writer.write_all(text.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
             }
             Err(RecvError::Closed) => break,
         }
