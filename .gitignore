@@ -8,5 +8,10 @@ __pycache__/
 cli/target/
 node_modules/
 packages/*/node_modules/
+plugins/*/node_modules/
+plugins/*/dist/
+examples/*/node_modules/
 dist/
 .env
+bun.lockb
+.tsbuildinfo
