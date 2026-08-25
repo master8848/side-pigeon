@@ -145,9 +145,33 @@ fn main() -> ExitCode {
             config: config_path,
         }),
         Some(Commands::Serve { ws, http }) => run_serve(config_path, ws, http),
-        Some(Commands::Init) => {
-            println!("pc init: scaffold not yet implemented — create a JSON config with {{\"providers\":[{{\"id\":\"demo\"}}]}} or set PC_PROVIDERS env");
+        Some(Commands::Init) => run_init(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pc init — scaffold a minimal config file
+// ---------------------------------------------------------------------------
+
+fn run_init() -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let json_path = cwd.join("pc.config.json");
+    let ts_path = cwd.join("pc.config.ts");
+    if json_path.exists() || ts_path.exists() {
+        let existing = if json_path.exists() { &json_path } else { &ts_path };
+        eprintln!("pc init: config already exists at {} — leaving it untouched", existing.display());
+        return ExitCode::SUCCESS;
+    }
+    let content = "{\n  \"providers\": [{ \"id\": \"demo\", \"config\": {} }]\n}\n";
+    match std::fs::write(&json_path, content) {
+        Ok(()) => {
+            println!("pc init: wrote {}", json_path.display());
+            println!("hint: pc check --config {}  |  pc serve", json_path.display());
             ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("pc init: failed to write {}: {e}", json_path.display());
+            ExitCode::FAILURE
         }
     }
 }
