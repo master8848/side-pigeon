@@ -5,8 +5,6 @@
 //! (newline-delimited). All logging goes to **stderr** — stdout is reserved
 //! for the JSON-RPC channel.
 
-mod config;
-
 #[cfg(feature = "demo")]
 mod demo;
 
@@ -121,7 +119,7 @@ fn parse_args() -> Result<Cli, String> {
 
 fn run(config_path: Option<String>) -> ExitCode {
     init_tracing();
-    let config = match config::load(config_path) {
+    let config = match provider_config::load(config_path) {
         Ok(config) => config,
         Err(e) => {
             eprintln!("pc: failed to load config: {e}");

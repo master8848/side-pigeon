@@ -14,7 +14,6 @@
 //! `PC_<ID>_CONFIG`, `PC_CONFIG` / `--config`. Logs go to stderr; stdout is
 //! reserved for the JSON output (receipts, event lines, check report).
 
-mod config;
 mod demo;
 mod ops;
 mod providers;
@@ -418,7 +417,7 @@ fn fail(err: &CliError) -> ExitCode {
 
 fn dispatch_send(args: SendArgs) -> ExitCode {
     init_tracing();
-    let config = match config::load(args.config.clone()) {
+    let config = match provider_config::load(args.config.clone()) {
         Ok(c) => c,
         Err(e) => return fail(&CliError::config(format!("failed to load config: {e}"))),
     };
@@ -450,7 +449,7 @@ fn dispatch_send(args: SendArgs) -> ExitCode {
 
 fn dispatch_listen(args: ListenArgs) -> ExitCode {
     init_tracing();
-    let config = match config::load(args.config.clone()) {
+    let config = match provider_config::load(args.config.clone()) {
         Ok(c) => c,
         Err(e) => return fail(&CliError::config(format!("failed to load config: {e}"))),
     };
@@ -471,7 +470,7 @@ fn dispatch_listen(args: ListenArgs) -> ExitCode {
 
 fn dispatch_check(args: CheckArgs) -> ExitCode {
     init_tracing();
-    let config = match config::load(args.config.clone()) {
+    let config = match provider_config::load(args.config.clone()) {
         Ok(c) => c,
         Err(e) => return fail(&CliError::config(format!("failed to load config: {e}"))),
     };

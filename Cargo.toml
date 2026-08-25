@@ -5,6 +5,7 @@ members = [
   "crates/provider-transport",
   "crates/provider-telegram",
   "crates/provider-discord",
+  "crates/provider-config",
   "bin/pc",
 ]
 

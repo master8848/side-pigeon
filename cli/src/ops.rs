@@ -12,8 +12,8 @@ use provider_transport::jsonrpc::JsonRpcError;
 use provider_transport::state::{provider_error, AppState, Outbound};
 use tokio::sync::broadcast::{self, error::RecvError};
 
-use crate::config::SidecarConfig;
 use crate::providers;
+use provider_config::SidecarConfig;
 
 /// How long `check` waits for a provider to prove itself (or fail) before
 /// declaring it healthy. Telegram/discord connect asynchronously; auth
@@ -505,7 +505,7 @@ async fn poll_last_error(mut take: impl FnMut() -> Option<ProviderError>) -> Smo
 #[cfg(all(test, feature = "demo"))]
 mod tests {
     use super::*;
-    use crate::config::ProviderConfig;
+    use provider_config::ProviderConfig;
 
     fn demo_config() -> SidecarConfig {
         SidecarConfig {

@@ -24,6 +24,7 @@ provider-core = { path = "../../crates/provider-core" }
 provider-transport = { path = "../../crates/provider-transport" }
 provider-telegram = { path = "../../crates/provider-telegram", optional = true }
 provider-discord = { path = "../../crates/provider-discord", optional = true }
+provider-config = { path = "../../crates/provider-config" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

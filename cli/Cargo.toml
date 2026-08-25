@@ -39,6 +39,7 @@ discord = ["dep:provider-discord"]
 [dependencies]
 provider-core = { path = "../crates/provider-core" }
 provider-transport = { path = "../crates/provider-transport" }
+provider-config = { path = "../crates/provider-config" }
 provider-telegram = { path = "../crates/provider-telegram", optional = true }
 provider-discord = { path = "../crates/provider-discord", optional = true }
 # Same version ranges as the root workspace ([workspace.dependencies]); the
