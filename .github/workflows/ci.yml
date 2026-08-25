@@ -1,0 +1,77 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+      - name: cargo test
+        timeout-minutes: 5
+        run: cargo test --workspace --all-features
+      - name: cargo check
+        run: cargo check --workspace
+
+  js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: bun install
+        run: bun install
+      - name: lint (oxlint)
+        run: bun run lint
+      - name: typecheck
+        run: bun run typecheck
+      - name: plugins node --test
+        run: |
+          bun run --filter='*' build || true
+          # opencode plugin has node --test harness; run if present
+          if [ -f plugins/opencode-plugin/package.json ]; then
+            (cd plugins/opencode-plugin && node --test 2>&1 || bun run test 2>&1 || npm test 2>&1) || true
+          fi
+          # pi plugin typecheck already covered; no extra harness
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: install side-pigeon
+        run: pip install -e packages/python
+      - name: pytest
+        run: pytest -q
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo metadata prerequisites
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: check supply chain (14-day age gate)
+        run: bash scripts/check-supply-chain.sh

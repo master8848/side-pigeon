@@ -9,8 +9,19 @@ cd "$(dirname "$0")/.."
 MIN_AGE_DAYS=14
 UA="provider-connect supply-chain-check (dev)"
 
+# Local path crates (provider-core, provider-ffi, provider-transport, etc.) are
+# not published to crates.io and are thus not age-gated directly; their
+# transitive registry dependencies (including `provider-ffi` optional deps like
+# `rusqlite` behind `persist`) ARE gated via the resolved graph below. Use
+# --all-features so optional deps (persist/ws/http) are included in metadata.
+if cargo metadata --format-version 1 --all-features >/dev/null 2>&1; then
+  META_CMD=(cargo metadata --format-version 1 --all-features)
+else
+  META_CMD=(cargo metadata --format-version 1)
+fi
+
 # Unique registry crate names from the resolved dependency graph.
-CRATES=$(cargo metadata --format-version 1 2>/dev/null | python3 -c '
+CRATES=$("${META_CMD[@]}" 2>/dev/null | python3 -c '
 import json, sys
 meta = json.load(sys.stdin)
 names = sorted({p["name"] for p in meta["packages"] if (p.get("source") or "").startswith("registry")})
