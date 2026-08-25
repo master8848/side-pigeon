@@ -1,6 +1,6 @@
 # Phase 08 — FFI + bod daemon
 
-**Lens:** Bun · **Status:** planned
+**Lens:** Bun · **Status:** in progress
 
 ## Why
 
@@ -20,7 +20,7 @@ Stdio JSON-RPC is correct for universality (`README.md:6` ACP precedent) but pay
 
 - `pc serve --watch` (watch `pc.config.ts`/JSON), prints `ready at ws://localhost:8787 http://localhost:8788`, `event.error` overlay (tracing stderr already at `bin/pc/src/main.rs:187`).
 - `pc dev` alias for serve+watch (Rsbuild analog).
-- Optional `sqlite` feature for message log (at-least-once replay into `GET /api/events?since=cursor`).
+- **Done:** SQLite persistence (feature `persist`, see `docs/persistence.md`). `pc serve` is durable by default (`./pc-events.db`, WAL); disable with `--no-persist`, custom path with `--persist PATH` or `PC_PERSIST_PATH`. `GET /api/events?since=CURSOR[&limit=N]` replays missed events.
 
 ### Any-agent hook
 
