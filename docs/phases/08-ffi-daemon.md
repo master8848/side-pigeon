@@ -1,6 +1,6 @@
 # Phase 08 — FFI + bod daemon
 
-**Lens:** Bun · **Status:** in progress
+**Lens:** Bun · **Status:** in progress — persist slice done, remaining: FFI empty registry, watch hot-reload stub
 
 ## Why
 
