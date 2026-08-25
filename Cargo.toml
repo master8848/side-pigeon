@@ -6,6 +6,7 @@ members = [
   "crates/provider-telegram",
   "crates/provider-discord",
   "crates/provider-config",
+  "crates/provider-ffi",
   "bin/pc",
 ]
 

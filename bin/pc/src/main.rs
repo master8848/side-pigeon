@@ -100,6 +100,18 @@ enum Commands {
         /// HTTP listen address (e.g. :8788 or 127.0.0.1:8788)
         #[arg(long, value_name = "ADDR")]
         http: Option<String>,
+        /// Watch pc.config.* for changes (polls every 1s; hot-reload stub)
+        #[arg(long)]
+        watch: bool,
+    },
+    /// Dev server — alias for `serve --watch` (Rsbuild analog)
+    Dev {
+        /// WebSocket listen address (e.g. :8787 or 127.0.0.1:8787)
+        #[arg(long, value_name = "ADDR")]
+        ws: Option<String>,
+        /// HTTP listen address (e.g. :8788 or 127.0.0.1:8788)
+        #[arg(long, value_name = "ADDR")]
+        http: Option<String>,
     },
     /// Scaffold a new provider-connect config (stub)
     Init,
@@ -144,7 +156,8 @@ fn main() -> ExitCode {
             json,
             config: config_path,
         }),
-        Some(Commands::Serve { ws, http }) => run_serve(config_path, ws, http),
+        Some(Commands::Serve { ws, http, watch }) => run_serve(config_path, ws, http, watch),
+        Some(Commands::Dev { ws, http }) => run_serve(config_path, ws, http, true),
         Some(Commands::Init) => run_init(),
     }
 }
@@ -1000,12 +1013,18 @@ fn run_serve(
     config_path: Option<String>,
     ws: Option<String>,
     http: Option<String>,
+    watch: bool,
 ) -> ExitCode {
     init_tracing();
     let (ws_addr, http_addr) = match (ws, http) {
         (None, None) => (Some(":8787".to_string()), Some(":8788".to_string())),
         (w, h) => (w, h),
     };
+    let watch_config_path = config_path.clone();
+    if watch {
+        tracing::info!("watch: monitoring pc.config.* for changes");
+        eprintln!("watch: monitoring pc.config.* for changes");
+    }
     let config = match provider_config::load(config_path) {
         Ok(c) => c,
         Err(e) => {
@@ -1031,6 +1050,8 @@ fn run_serve(
     let notify_for_ws = notify_tx.clone();
     #[cfg(not(feature = "ws"))]
     let _notify_for_ws = notify_tx.clone();
+    let watch_enabled = watch;
+    let watch_path = watch_config_path.clone();
     let result: Result<(), String> = runtime.block_on(async move {
         let http_listener: Option<tokio::net::TcpListener> = match http_addr {
             Some(raw) => {
@@ -1087,9 +1108,38 @@ fn run_serve(
                 return Err("ws requested but pc was built without --features ws".to_string());
             }
         }
+        // --watch: simple mtime poll every 1s (no notify crate)
+        let _watch_handle: Option<tokio::task::JoinHandle<()>> = if watch_enabled {
+            let watch_path_owned = watch_path.clone();
+            Some(tokio::spawn(async move {
+                let candidates: Vec<std::path::PathBuf> = if let Some(p) = watch_path_owned {
+                    vec![std::path::PathBuf::from(p)]
+                } else {
+                    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    vec![cwd.join("pc.config.json"), cwd.join("pc.config.ts"), cwd.join("pc.config.js")]
+                };
+                let mut last_mtimes: Vec<Option<std::time::SystemTime>> = candidates.iter().map(|p| std::fs::metadata(p).ok().and_then(|m| m.modified().ok())).collect();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    for (i, path) in candidates.iter().enumerate() {
+                        let cur = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+                        if cur != last_mtimes[i] {
+                            last_mtimes[i] = cur;
+                            if cur.is_some() || last_mtimes[i].is_some() {
+                                tracing::info!(path = %path.display(), "watch: config changed — restart pc to apply (hot-reload stub)");
+                                eprintln!("watch: {} changed — restart pc to apply", path.display());
+                            }
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
         tracing::info!("pc serve ready (Ctrl-C to stop)");
         tokio::signal::ctrl_c().await.map_err(|e| format!("signal error: {e}"))?;
         tracing::info!("pc serve shutting down");
+        if let Some(h) = _watch_handle { h.abort(); }
         for h in handles { h.abort(); }
         let mut guard = state.lock().await;
         if let Err(e) = guard.registry_mut().stop_all().await {

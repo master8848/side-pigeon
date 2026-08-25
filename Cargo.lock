@@ -780,6 +780,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-ffi"
+version = "0.1.0"
+dependencies = [
+ "provider-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-telegram"
 version = "0.1.0"
 dependencies = [
