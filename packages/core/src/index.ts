@@ -59,3 +59,11 @@ export type {
   ProviderClient,
   AgentAdapterOptions,
 } from "./provider-client.js";
+
+// FFI cdylib binding (Bun-first via bun:ffi, Node via koffi/ffi-napi, stdio fallback)
+export {
+  tryLoadFfi,
+  createFfiTransport,
+  MAX_POLL,
+} from "./ffi.js";
+export type { FfiLib, FfiHandle, FfiTransport, FfiTransportOptions } from "./ffi.js";
