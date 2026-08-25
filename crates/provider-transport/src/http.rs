@@ -4,10 +4,18 @@
 //! ```text
 //! GET  /health                     -> capabilities_value() (k8s / pc check)
 //! POST /api/providers/:id/send     -> AppState::send (typed SendMessage JSON)
-//! GET  /api/events                 -> SSE subscription to broadcast::Sender<Outbound>
+//! GET  /api/events                 -> SSE live stream
+//! GET  /api/events?since=CURSOR    -> JSON replay (when --features persist)
 //! POST /rpc                        -> JSON-RPC dispatch (same as stdio/ws handle_request)
 //! ```
 //! Keeps stdio primary; enabled via `pc serve --http :8788 --ws :8787`.
+//!
+//! # Security note — TLS
+//! Plaintext HTTP here is **localhost-only** by design. Production deployments
+//! MUST place a reverse-proxy (nginx, Caddy, Fly, etc.) in front that
+//! terminates TLS and enforces authentication. Do not expose the raw listener
+//! directly to the public internet.
+#![allow(clippy::too_many_lines)]
 
 use std::sync::Arc;
 
@@ -20,7 +28,7 @@ use hyper::{Method, Request as HttpRequest, Response as HttpResponse, StatusCode
 use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, Semaphore, broadcast};
 
 use crate::error::TransportError;
 use crate::jsonrpc::{Id, JsonRpcError};
@@ -33,10 +41,24 @@ pub async fn serve_http(
     state: Arc<Mutex<AppState>>,
     listener: TcpListener,
 ) -> Result<(), TransportError> {
+    const MAX_CONNECTIONS: usize = 256;
+    let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    // TODO(idle-timeout): enforce idle read/write timeouts on HTTP connections
+    // (e.g. `tokio::time::timeout` around `serve_connection` or `http1::Builder`
+    // header read timeout) to reclaim slow-loris / idle sockets.
     loop {
         let (stream, peer) = listener.accept().await?;
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(peer = %peer, "http connection limit reached (256), dropping");
+                // Drop connection; alternative would be to reply 503 before closing.
+                continue;
+            }
+        };
         let state = state.clone();
         tokio::spawn(async move {
+            let _permit = permit; // held for connection lifetime
             let io = TokioIo::new(stream);
             let service = service_fn(move |request| {
                 let state = state.clone();
@@ -68,11 +90,83 @@ fn text_body(status: StatusCode, text: String) -> HttpResponse<BoxBodyType> {
         .expect("valid response")
 }
 
+fn query_param(uri: &hyper::Uri, key: &str) -> Option<String> {
+    uri.query().and_then(|q| {
+        for pair in q.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                if k == key {
+                    return Some(v.to_string());
+                }
+            }
+        }
+        None
+    })
+}
+
+const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
+
+fn is_allowed_http_origin(origin: &str) -> bool {
+    // Allow only loopback origins. Covers http://127.0.0.1[:port], http://localhost[:port], http://[::1][:port]
+    origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]")
+}
+
+fn with_cors(mut resp: HttpResponse<BoxBodyType>, origin: Option<&str>) -> HttpResponse<BoxBodyType> {
+    if let Some(o) = origin {
+        if is_allowed_http_origin(o) {
+            let headers = resp.headers_mut();
+            headers.insert("access-control-allow-origin", o.parse().unwrap_or_else(|_| "http://127.0.0.1".parse().unwrap()));
+            headers.insert("access-control-allow-methods", "GET, POST, OPTIONS".parse().unwrap());
+            headers.insert("access-control-allow-headers", "content-type, authorization".parse().unwrap());
+            headers.insert("vary", "Origin".parse().unwrap());
+        }
+    }
+    resp
+}
+
 async fn handle_http(
     state: Arc<Mutex<AppState>>,
     req: HttpRequest<Incoming>,
 ) -> Result<HttpResponse<BoxBodyType>, hyper::Error> {
-    let path = req.uri().path().to_owned();
+    let origin_hdr = req
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
+
+    // CORS preflight
+    if req.method() == Method::OPTIONS {
+        if let Some(ref origin) = origin_hdr {
+            if !is_allowed_http_origin(origin) {
+                return Ok(text_body(StatusCode::FORBIDDEN, "forbidden origin".to_string()));
+            }
+            let resp = HttpResponse::builder()
+                .status(StatusCode::NO_CONTENT)
+                .header("access-control-allow-origin", origin.as_str())
+                .header("access-control-allow-methods", "GET, POST, OPTIONS")
+                .header("access-control-allow-headers", "content-type, authorization")
+                .header("access-control-max-age", "86400")
+                .header("vary", "Origin")
+                .body(Full::new(Bytes::new()).boxed())
+                .expect("valid preflight response");
+            return Ok(resp);
+        }
+        // No Origin: still answer 204 with allowed methods
+        return Ok(HttpResponse::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header("allow", "GET, POST, OPTIONS")
+            .body(Full::new(Bytes::new()).boxed())
+            .expect("valid OPTIONS response"));
+    }
+
+    // CORS enforcement: if Origin present and not loopback, reject
+    if let Some(ref origin) = origin_hdr {
+        if !is_allowed_http_origin(origin) {
+            return Ok(text_body(StatusCode::FORBIDDEN, "forbidden origin".to_string()));
+        }
+    }
+
+    let uri = req.uri().clone();
+    let path = uri.path().to_owned();
     let method = req.method().clone();
 
     // GET /health
@@ -81,11 +175,75 @@ async fn handle_http(
             let guard = state.lock().await;
             guard.capabilities_value()
         };
-        return Ok(json_body(StatusCode::OK, caps));
+        return Ok(with_cors(json_body(StatusCode::OK, caps), origin_hdr.as_deref()));
     }
 
-    // GET /api/events -> SSE
+    // GET /api/events -> SSE (live) or JSON replay (?since=CURSOR when persist)
     if method == Method::GET && path == "/api/events" {
+        // Replay: GET /api/events?since=123[&limit=200]
+        if let Some(since_raw) = query_param(&uri, "since") {
+            #[cfg(not(feature = "persist"))]
+            {
+                let _ = since_raw;
+                return Ok(with_cors(
+                    json_body(
+                        StatusCode::NOT_IMPLEMENTED,
+                        json!({"error": {"code": -32000, "message": "built without --features persist; replay unavailable"}}),
+                    ),
+                    origin_hdr.as_deref(),
+                ));
+            }
+            #[cfg(feature = "persist")]
+            {
+                let since: u64 = match since_raw.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Ok(with_cors(
+                            json_body(
+                                StatusCode::BAD_REQUEST,
+                                json!({"error": {"code": -32602, "message": "since must be an integer cursor"}}),
+                            ),
+                            origin_hdr.as_deref(),
+                        ));
+                    }
+                };
+                // Cap replay to prevent unbounded reads / DoS
+                let raw_limit: Option<u64> = query_param(&uri, "limit").and_then(|s| s.parse().ok());
+                let capped_limit: Option<u64> = Some(raw_limit.unwrap_or(500).min(1000));
+                let res = {
+                    let guard = state.lock().await;
+                    match guard.persist() {
+                        Some(log) => log.replay_since(since, capped_limit),
+                        None => Err("persistence not enabled (use --persist)".into()),
+                    }
+                };
+                match res {
+                    Ok(rows) => {
+                        let items: Vec<Value> = rows
+                            .into_iter()
+                            .map(|(cursor, payload)| json!({"cursor": cursor, "event": payload}))
+                            .collect();
+                        let latest = {
+                            let guard = state.lock().await;
+                            guard.persist().and_then(|l| l.latest_cursor().ok()).unwrap_or(0)
+                        };
+                        return Ok(with_cors(
+                            json_body(StatusCode::OK, json!({"events": items, "latest_cursor": latest})),
+                            origin_hdr.as_deref(),
+                        ));
+                    }
+                    Err(e) => {
+                        return Ok(with_cors(
+                            json_body(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                json!({"error": {"code": -32603, "message": e}}),
+                            ),
+                            origin_hdr.as_deref(),
+                        ));
+                    }
+                }
+            }
+        }
         let notify_tx: broadcast::Sender<Outbound> = {
             let guard = state.lock().await;
             guard.notify().clone()
@@ -121,6 +279,8 @@ async fn handle_http(
             .header("connection", "keep-alive")
             .body(body)
             .expect("valid sse response");
+        // Add CORS headers to SSE if loopback Origin
+        let resp = with_cors(resp, origin_hdr.as_deref());
         return Ok(resp);
     }
 
@@ -131,26 +291,41 @@ async fn handle_http(
             .and_then(|s| s.strip_suffix("/send"))
             .unwrap_or("");
         if id.is_empty() {
-            return Ok(json_body(
-                StatusCode::BAD_REQUEST,
-                json!({"error": {"code": -32602, "message": "missing provider id"}}),
+            return Ok(with_cors(
+                json_body(
+                    StatusCode::BAD_REQUEST,
+                    json!({"error": {"code": -32602, "message": "missing provider id"}}),
+                ),
+                origin_hdr.as_deref(),
             ));
         }
         let body_bytes = match req.collect().await {
             Ok(c) => c.to_bytes(),
             Err(e) => {
-                return Ok(text_body(
-                    StatusCode::BAD_REQUEST,
-                    format!("failed to read body: {e}"),
+                return Ok(with_cors(
+                    text_body(
+                        StatusCode::BAD_REQUEST,
+                        format!("failed to read body: {e}"),
+                    ),
+                    origin_hdr.as_deref(),
                 ));
             }
         };
+        if body_bytes.len() > MAX_BODY_BYTES {
+            return Ok(with_cors(
+                text_body(StatusCode::PAYLOAD_TOO_LARGE, "payload too large (max 1 MiB)".to_string()),
+                origin_hdr.as_deref(),
+            ));
+        }
         let msg: provider_core::SendMessage = match serde_json::from_slice(&body_bytes) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(json_body(
-                    StatusCode::BAD_REQUEST,
-                    json!({"error": {"code": JsonRpcError::INVALID_PARAMS, "message": e.to_string()}}),
+                return Ok(with_cors(
+                    json_body(
+                        StatusCode::BAD_REQUEST,
+                        json!({"error": {"code": JsonRpcError::INVALID_PARAMS, "message": e.to_string()}}),
+                    ),
+                    origin_hdr.as_deref(),
                 ));
             }
         };
@@ -161,7 +336,7 @@ async fn handle_http(
         match outcome {
             Ok(receipt) => {
                 let v = serde_json::to_value(&receipt).unwrap_or(Value::Null);
-                return Ok(json_body(StatusCode::OK, v));
+                return Ok(with_cors(json_body(StatusCode::OK, v), origin_hdr.as_deref()));
             }
             Err(e) => {
                 let je = provider_error(e);
@@ -172,9 +347,12 @@ async fn handle_http(
                     JsonRpcError::CONFIG_ERROR => StatusCode::BAD_REQUEST,
                     _ => StatusCode::INTERNAL_SERVER_ERROR,
                 };
-                return Ok(json_body(
-                    status,
-                    json!({"error": {"code": je.code, "message": je.message, "data": je.data}}),
+                return Ok(with_cors(
+                    json_body(
+                        status,
+                        json!({"error": {"code": je.code, "message": je.message, "data": je.data}}),
+                    ),
+                    origin_hdr.as_deref(),
                 ));
             }
         }
@@ -185,12 +363,21 @@ async fn handle_http(
         let body_bytes = match req.collect().await {
             Ok(c) => c.to_bytes(),
             Err(e) => {
-                return Ok(text_body(
-                    StatusCode::BAD_REQUEST,
-                    format!("failed to read body: {e}"),
+                return Ok(with_cors(
+                    text_body(
+                        StatusCode::BAD_REQUEST,
+                        format!("failed to read body: {e}"),
+                    ),
+                    origin_hdr.as_deref(),
                 ));
             }
         };
+        if body_bytes.len() > MAX_BODY_BYTES {
+            return Ok(with_cors(
+                text_body(StatusCode::PAYLOAD_TOO_LARGE, "payload too large (max 1 MiB)".to_string()),
+                origin_hdr.as_deref(),
+            ));
+        }
         let body_str = String::from_utf8_lossy(&body_bytes).into_owned();
         let response = match parse_request(&body_str) {
             Ok(request) => match state.lock().await.handle_request(request).await {
@@ -205,11 +392,12 @@ async fn handle_http(
             Err(response) => *response,
         };
         let text = serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string());
-        return Ok(HttpResponse::builder()
+        let resp = HttpResponse::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/json")
             .body(Full::new(Bytes::from(text)).boxed())
-            .expect("valid rpc response"));
+            .expect("valid rpc response");
+        return Ok(with_cors(resp, origin_hdr.as_deref()));
     }
 
     // Method not allowed for known paths with wrong verb
@@ -219,15 +407,21 @@ async fn handle_http(
         || path == "/api/rpc"
         || (path.starts_with("/api/providers/") && path.ends_with("/send"))
     {
-        return Ok(text_body(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "method not allowed".to_string(),
+        return Ok(with_cors(
+            text_body(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method not allowed".to_string(),
+            ),
+            origin_hdr.as_deref(),
         ));
     }
 
     // Not found
-    Ok(json_body(
-        StatusCode::NOT_FOUND,
-        json!({"error": {"code": -32601, "message": format!("not found: {path}")}}),
+    Ok(with_cors(
+        json_body(
+            StatusCode::NOT_FOUND,
+            json!({"error": {"code": -32601, "message": format!("not found: {path}")}}),
+        ),
+        origin_hdr.as_deref(),
     ))
 }
