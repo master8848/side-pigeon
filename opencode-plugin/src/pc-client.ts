@@ -6,6 +6,13 @@
  * `pc`'s tracing logs and is piped through to this process's stderr. Responses
  * and `event.*` notifications are interleaved on stdout in production order,
  * so responses are matched by id and notifications are emitted as events.
+ *
+ * NOTE: The NDJSON line parser (`parseLine` / `attachNdjsonReader`) is now
+ * the single source of truth in `@provider-connect/core/src/ndjson.ts`
+ * (extracted from this file at pc-client.ts:134 and examples/node/index.mjs:64).
+ * This file keeps a small duplicated `onLine` for standalone use so
+ * `opencode-plugin` has no runtime dep on `@provider-connect/core`; a future
+ * refactor can replace it with `import { parseLine } from "@provider-connect/core"`.
  */
 
 import { spawn } from "node:child_process";
