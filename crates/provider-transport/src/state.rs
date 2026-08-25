@@ -12,7 +12,8 @@ use crate::events::{EVENT_ERROR, EVENT_MESSAGE};
 use crate::jsonrpc::{JsonRpcError, Notification, Request, Response, JSONRPC_VERSION};
 
 /// Broadcast channel capacity for outgoing frames (responses + notifications).
-const OUTBOUND_CAPACITY: usize = 512;
+/// Sized for chat-rate traffic (not 512 ~512 KB idle overhead per connection).
+const OUTBOUND_CAPACITY: usize = 32;
 
 /// A frame the transport writes to the client: either a response to a request
 /// or an asynchronous event notification.
