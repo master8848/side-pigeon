@@ -1,0 +1,37 @@
+{
+  "name": "side-pigeon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "side-pigeon — Rust sidecar connecting AI agents to messaging providers (Telegram, Discord, ...) with JSON-RPC 2.0 over stdio",
+  "license": "MIT",
+  "author": "Saurav Sanjel <master8848@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/master8848/side-pigeon.git"
+  },
+  "workspaces": [
+    "packages/*",
+    "plugins/opencode-plugin"
+  ],
+  "type": "module",
+  "scripts": {
+    "typecheck": "bun run --filter='*' typecheck",
+    "build": "bun run --filter='*' build",
+    "lint": "oxlint --type-aware .",
+    "lint:fix": "oxlint --fix --type-aware .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "cargo test --workspace && bun run --filter='*' test"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.0",
+    "node": ">=20"
+  },
+  "packageManager": "bun@1.4.0"
+}

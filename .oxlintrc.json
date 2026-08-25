@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "pedantic": "off",
+    "style": "off"
+  },
+  "rules": {
+    "unicorn/no-useless-fallback-in-spread": "off",
+    "unicorn/no-array-sort": "off",
+    "eslint/no-underscore-dangle": "off"
+  },
+  "ignorePatterns": ["target/**", "dist/**", "node_modules/**", "plugins/opencode-plugin/dist/**"],
+  "env": {
+    "builtin": true
+  }
+}
