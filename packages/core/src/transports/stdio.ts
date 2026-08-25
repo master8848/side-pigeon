@@ -43,7 +43,8 @@ export function stdio(opts: StdioTransportOptions = {}): StdioTransport {
       const env = buildEnv(process.env, opts.env);
       const spawnFn: SpawnFn =
         opts.spawnFn ??
-        ((b, a, o) => spawn(b, a, { stdio: ["pipe", "pipe", "inherit"], env: o.env }) as unknown as ChildLike);
+        ((b, a, o) =>
+          spawn(b, a, { stdio: ["pipe", "pipe", "inherit"], env: o.env }) as unknown as ChildLike);
       return PcClient.start(bin, args, env, { spawnFn, requestTimeoutMs: opts.requestTimeoutMs });
     },
   };

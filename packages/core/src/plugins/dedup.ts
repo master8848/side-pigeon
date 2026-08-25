@@ -48,7 +48,10 @@ export function dedup(opts: DedupOptions = {}): Plugin {
  * Complements `dedup` (which keys on inbound `id`). Kept separate since
  * echo ids come from `send` receipts (see runtime.ts:305 recentSent).
  */
-export function echoDedup(opts: DedupOptions = {}): { trackSent(provider: string, chat: string, messageId: string): void; isEcho(msg: ChannelMessage): boolean } {
+export function echoDedup(opts: DedupOptions = {}): {
+  trackSent(provider: string, chat: string, messageId: string): void;
+  isEcho(msg: ChannelMessage): boolean;
+} {
   const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
   const maxRecent = opts.maxRecent ?? DEFAULT_MAX;
   const sent = new Map<string, number>();
@@ -72,7 +75,10 @@ export function echoDedup(opts: DedupOptions = {}): { trackSent(provider: string
     isEcho(msg: ChannelMessage): boolean {
       if (sent.size === 0) return false;
       const suffix = msg.id.split("/").pop() ?? msg.id;
-      return sent.has(`${msg.channel}:${msg.channel_id}:${msg.id}`) || sent.has(`${msg.channel}:${msg.channel_id}:${suffix}`);
+      return (
+        sent.has(`${msg.channel}:${msg.channel_id}:${msg.id}`) ||
+        sent.has(`${msg.channel}:${msg.channel_id}:${suffix}`)
+      );
     },
   };
 }

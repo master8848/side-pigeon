@@ -15,25 +15,25 @@
  *
  * Zero dependencies — plain Node (child_process, readline, fs, path).
  */
-import { spawn, spawnSync } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from "node:child_process";
+import { createInterface } from "node:readline";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..', '..'); // examples/node -> repo root
-const provider = process.env.PROVIDER || 'telegram';
+const repoRoot = path.resolve(__dirname, "..", ".."); // examples/node -> repo root
+const provider = process.env.PROVIDER || "telegram";
 const token = process.env.TOKEN;
 const channelId = process.env.CHANNEL_ID;
 const runSeconds = Number(process.env.RUN_SECONDS || 30);
 
 if (!token) {
-  console.error('[example] missing TOKEN env var');
+  console.error("[example] missing TOKEN env var");
   process.exit(2);
 }
 if (!channelId) {
-  console.error('[example] missing CHANNEL_ID env var');
+  console.error("[example] missing CHANNEL_ID env var");
   process.exit(2);
 }
 
@@ -41,23 +41,27 @@ if (!channelId) {
 function resolvePcBinary() {
   const candidates = [
     process.env.PC_BIN,
-    path.join(repoRoot, 'target', 'release', 'pc'),
-    path.join(repoRoot, 'target', 'debug', 'pc'),
+    path.join(repoRoot, "target", "release", "pc"),
+    path.join(repoRoot, "target", "debug", "pc"),
   ].filter(Boolean);
   for (const c of candidates) {
     if (c && existsSync(c)) return c;
   }
   console.error(
-    '[example] pc binary not found; building: cargo build --release -p pc --features telegram,discord',
+    "[example] pc binary not found; building: cargo build --release -p pc --features telegram,discord",
   );
-  const build = spawnSync('cargo', ['build', '--release', '-p', 'pc', '--features', 'telegram,discord'], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-  });
+  const build = spawnSync(
+    "cargo",
+    ["build", "--release", "-p", "pc", "--features", "telegram,discord"],
+    {
+      cwd: repoRoot,
+      stdio: "inherit",
+    },
+  );
   if (build.status !== 0) {
     throw new Error(`cargo build failed (status ${build.status})`);
   }
-  return path.join(repoRoot, 'target', 'release', 'pc');
+  return path.join(repoRoot, "target", "release", "pc");
 }
 
 /** Minimal JSON-RPC 2.0 client over a child's stdio (NDJSON). */
@@ -67,13 +71,13 @@ class JsonRpcClient {
     this.nextId = 1;
     this.pending = new Map();
     this.rl = createInterface({ input: child.stdout });
-    this.rl.on('line', (line) => {
+    this.rl.on("line", (line) => {
       if (!line.trim()) return;
       let msg;
       try {
         msg = JSON.parse(line);
-      } catch (err) {
-        console.error('[example] unparseable line:', line);
+      } catch {
+        console.error("[example] unparseable line:", line);
         return;
       }
       if (msg.id !== undefined && msg.id !== null && this.pending.has(msg.id)) {
@@ -85,7 +89,7 @@ class JsonRpcClient {
           resolve(msg.result);
         }
       } else if (msg.method) {
-        this.emit('notification', msg);
+        this.emit("notification", msg);
       }
     });
     this.listeners = new Map();
@@ -104,14 +108,14 @@ class JsonRpcClient {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       this.pending.set(id, { resolve, reject });
-      const frame = { jsonrpc: '2.0', id, method };
+      const frame = { jsonrpc: "2.0", id, method };
       if (params !== undefined) frame.params = params;
       this.child.stdin.write(`${JSON.stringify(frame)}\n`);
     });
   }
 
   notify(method, params) {
-    const frame = { jsonrpc: '2.0', method };
+    const frame = { jsonrpc: "2.0", method };
     if (params !== undefined) frame.params = params;
     this.child.stdin.write(`${JSON.stringify(frame)}\n`);
   }
@@ -126,7 +130,7 @@ async function main() {
   const pcBin = resolvePcBinary();
   console.error(`[example] spawning ${pcBin}`);
   const child = spawn(pcBin, [], {
-    stdio: ['pipe', 'pipe', 'inherit'], // stderr -> our stderr (tracing logs)
+    stdio: ["pipe", "pipe", "inherit"], // stderr -> our stderr (tracing logs)
     env: {
       ...process.env,
       PC_PROVIDERS: provider,
@@ -137,12 +141,12 @@ async function main() {
   const client = new JsonRpcClient(child);
   let eventsSeen = 0;
 
-  client.on('notification', (msg) => {
-    if (msg.method === 'event.message') {
+  client.on("notification", (msg) => {
+    if (msg.method === "event.message") {
       eventsSeen += 1;
       const m = msg.params?.message || {};
       const text = Array.isArray(m.content)
-        ? m.content.map((p) => (typeof p === 'string' ? p : p.Text || '[media]')).join(' ')
+        ? m.content.map((p) => (typeof p === "string" ? p : p.Text || "[media]")).join(" ")
         : m.content;
       console.log(
         `[example] event.message #${eventsSeen} channel=${m.channel} channelId=${m.channel_id} ` +
@@ -150,32 +154,34 @@ async function main() {
           `ts=${m.ts} text=${JSON.stringify(text)}`,
       );
       console.log(`[example] node memory on event: ${mem()}`);
-    } else if (msg.method === 'event.error') {
+    } else if (msg.method === "event.error") {
       console.error(`[example] event.error: ${JSON.stringify(msg.params)}`);
     } else {
       console.log(`[example] notification ${msg.method}: ${JSON.stringify(msg.params)}`);
     }
   });
 
-  child.on('exit', (code, signal) => {
+  child.on("exit", (code, signal) => {
     console.error(`[example] pc exited (code=${code} signal=${signal})`);
     process.exit(code ?? 1);
   });
 
   // --- protocol drive ---
-  const init = await client.request('initialize');
-  console.log(`[example] initialize -> protocolVersion=${init.protocolVersion} providers=${JSON.stringify(init.providers)}`);
+  const init = await client.request("initialize");
+  console.log(
+    `[example] initialize -> protocolVersion=${init.protocolVersion} providers=${JSON.stringify(init.providers)}`,
+  );
 
-  const caps = await client.request('capabilities');
+  const caps = await client.request("capabilities");
   console.log(`[example] capabilities -> methods=${JSON.stringify(caps.methods)}`);
 
-  const started = await client.request('listen', { providers: [provider] });
+  const started = await client.request("listen", { providers: [provider] });
   console.log(`[example] listen -> started=${JSON.stringify(started.started)}`);
 
   console.log(`[example] node memory after startup: ${mem()}`);
   console.log(`[example] listening on ${provider}; sending a test message to ${channelId}`);
 
-  const receipt = await client.request('send', {
+  const receipt = await client.request("send", {
     provider,
     // Full SendMessage wire shape (reply_to/attachments are optional fields —
     // serde(default) fills them when omitted).
@@ -195,14 +201,14 @@ async function main() {
       clearTimeout(timer);
       resolve();
     };
-    process.once('SIGINT', onSignal);
-    process.once('SIGTERM', onSignal);
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
   });
   await done;
 
   console.log(`[example] shutting down after ${runSeconds}s (events seen: ${eventsSeen})`);
   try {
-    await client.request('shutdown');
+    await client.request("shutdown");
   } catch (err) {
     console.error(`[example] shutdown request failed: ${err.message}`);
   }

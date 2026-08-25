@@ -67,7 +67,10 @@ export interface ProviderClient {
     onMutate?: (vars: SendInput) => void;
     onSuccess?: (receipt: SendReceipt, vars: SendInput) => void;
     onError?: (err: unknown, vars: SendInput) => void;
-  }): { mutate(vars: SendInput): Promise<SendReceipt>; mutateAsync(vars: SendInput): Promise<SendReceipt> };
+  }): {
+    mutate(vars: SendInput): Promise<SendReceipt>;
+    mutateAsync(vars: SendInput): Promise<SendReceipt>;
+  };
   start(): Promise<void>;
   shutdown(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -79,7 +82,11 @@ function matchesFilter(msg: ChannelMessage, filter: EventFilter): boolean {
   if (typeof filter === "function") return filter(msg);
   if (filter.provider !== undefined && msg.channel !== filter.provider) return false;
   if (filter.channelId !== undefined && msg.channel_id !== filter.channelId) return false;
-  if (filter.explicitlyAddressed !== undefined && Boolean(msg.explicitly_addressed) !== filter.explicitlyAddressed) return false;
+  if (
+    filter.explicitlyAddressed !== undefined &&
+    Boolean(msg.explicitly_addressed) !== filter.explicitlyAddressed
+  )
+    return false;
   return true;
 }
 
@@ -88,7 +95,8 @@ function providerEnv(providers: ProviderDef[]): NodeJS.ProcessEnv {
   env.PC_PROVIDERS = providers.map((p) => p.id).join(",");
   for (const p of providers) {
     if (p.token) env[`PC_${p.id.toUpperCase()}_TOKEN`] = p.token;
-    if (p.config && Object.keys(p.config).length > 0) env[`PC_${p.id.toUpperCase()}_CONFIG`] = JSON.stringify(p.config);
+    if (p.config && Object.keys(p.config).length > 0)
+      env[`PC_${p.id.toUpperCase()}_CONFIG`] = JSON.stringify(p.config);
   }
   return env;
 }
@@ -106,13 +114,22 @@ export function createProviderClient(opts: ProviderClientOptions): ProviderClien
       try {
         if (p.onMessage?.(msg)) return; // suppressed
       } catch (err) {
-        try { p.onError?.(err); } catch { /* ignore plugin error handler */ }
+        try {
+          p.onError?.(err);
+        } catch {
+          /* ignore plugin error handler */
+        }
       }
     }
     for (const { filter, cb } of listeners) {
       if (matchesFilter(msg, filter)) {
-        try { cb(msg); } catch (err) {
-          for (const p of plugins) try { p.onError?.(err); } catch {}
+        try {
+          cb(msg);
+        } catch (err) {
+          for (const p of plugins)
+            try {
+              p.onError?.(err);
+            } catch {}
         }
       }
     }
@@ -126,17 +143,35 @@ export function createProviderClient(opts: ProviderClientOptions): ProviderClien
       const env = providerEnv(opts.providers);
       const bin = opts.pcBin ?? "pc";
       const args = opts.pcArgs ?? [];
-      const t = stdio({ bin, args, env, spawnFn: opts.spawnFn, requestTimeoutMs: opts.requestTimeoutMs });
+      const t = stdio({
+        bin,
+        args,
+        env,
+        spawnFn: opts.spawnFn,
+        requestTimeoutMs: opts.requestTimeoutMs,
+      });
       pc = t.connect();
     }
     pc.on("message", (m) => dispatch(m as ChannelMessage));
-    pc.on("provider-error", (e) => { for (const p of plugins) try { p.onError?.(e); } catch {} });
-    pc.on("protocol-error", (e) => { for (const p of plugins) try { p.onError?.(e); } catch {} });
+    pc.on("provider-error", (e) => {
+      for (const p of plugins)
+        try {
+          p.onError?.(e);
+        } catch {}
+    });
+    pc.on("protocol-error", (e) => {
+      for (const p of plugins)
+        try {
+          p.onError?.(e);
+        } catch {}
+    });
     return pc;
   }
 
   const client: ProviderClient = {
-    get pc() { return pc; },
+    get pc() {
+      return pc;
+    },
 
     subscribe(filter: EventFilter, cb: (msg: ChannelMessage) => void): () => void {
       const entry = { filter, cb };
@@ -151,13 +186,16 @@ export function createProviderClient(opts: ProviderClientOptions): ProviderClien
       const c = ensurePc();
       const message: Record<string, unknown> = { channel_id: input.channelId, text: input.text };
       if (input.replyTo) message.reply_to = input.replyTo;
-      if (input.attachments && input.attachments.length > 0) message.attachments = input.attachments;
+      if (input.attachments && input.attachments.length > 0)
+        message.attachments = input.attachments;
       else message.attachments = [];
       const receipt = await c.request<SendReceipt>("send", { provider: input.provider, message });
       return receipt;
     },
 
-    use(plugin: Plugin): void { plugins.push(plugin); },
+    use(plugin: Plugin): void {
+      plugins.push(plugin);
+    },
 
     createSendMutation(mutationOpts = {}) {
       const mutateAsync = async (vars: SendInput): Promise<SendReceipt> => {
@@ -185,11 +223,16 @@ export function createProviderClient(opts: ProviderClientOptions): ProviderClien
     },
 
     async shutdown(): Promise<void> {
-      if (pc) { await pc.shutdown(); pc = undefined; }
+      if (pc) {
+        await pc.shutdown();
+        pc = undefined;
+      }
       started = false;
     },
 
-    async [Symbol.asyncDispose](): Promise<void> { await client.shutdown(); },
+    async [Symbol.asyncDispose](): Promise<void> {
+      await client.shutdown();
+    },
   };
 
   return client;
@@ -204,7 +247,10 @@ export function createProviderClient(opts: ProviderClientOptions): ProviderClien
 
 export interface AgentAdapterOptions {
   client: ProviderClient;
-  onMessage: (msg: ChannelMessage, reply: (text: string, opts?: { replyTo?: string }) => Promise<SendReceipt>) => Promise<string | void> | string | void;
+  onMessage: (
+    msg: ChannelMessage,
+    reply: (text: string, opts?: { replyTo?: string }) => Promise<SendReceipt>,
+  ) => Promise<string | void> | string | void;
   filter?: EventFilter;
 }
 
@@ -212,7 +258,12 @@ export function createAgentAdapter(opts: AgentAdapterOptions): { unsubscribe: ()
   const filter: EventFilter = opts.filter ?? {};
   const unsub = opts.client.subscribe(filter, async (msg) => {
     const reply = (text: string, replyOpts?: { replyTo?: string }) =>
-      opts.client.send({ provider: msg.channel, channelId: msg.channel_id, text, replyTo: replyOpts?.replyTo ?? msg.id });
+      opts.client.send({
+        provider: msg.channel,
+        channelId: msg.channel_id,
+        text,
+        replyTo: replyOpts?.replyTo ?? msg.id,
+      });
     const result = await opts.onMessage(msg, reply);
     if (typeof result === "string" && result.trim() !== "") {
       await reply(result);

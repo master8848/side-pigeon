@@ -28,7 +28,9 @@ export async function runPc(opts: RunPcOptions): Promise<{ text: string; raw: un
     let text: string;
 
     if (opts.check) {
-      const providers = Array.isArray(caps.providers) ? (caps.providers as string[]).join(", ") : "(none)";
+      const providers = Array.isArray(caps.providers)
+        ? (caps.providers as string[]).join(", ")
+        : "(none)";
       text = [
         `pc sidecar: ${pcBin}`,
         `protocolVersion: ${caps.protocolVersion ?? "?"}`,
@@ -49,7 +51,10 @@ export async function runPc(opts: RunPcOptions): Promise<{ text: string; raw: un
       text = `sent via ${opts.provider} to ${opts.channelId}: message_id=${receipt.message_id} ts=${receipt.ts}`;
     } else {
       // listen
-      const started = (await sidecar.request("listen", opts.providers ? { providers: opts.providers } : undefined)) as Record<string, unknown>;
+      const started = (await sidecar.request(
+        "listen",
+        opts.providers ? { providers: opts.providers } : undefined,
+      )) as Record<string, unknown>;
       const deadline = Date.now() + (opts.timeoutSecs ?? 30) * 1000;
       const messages: Array<Record<string, unknown>> = [];
       let cursor = 0;
@@ -96,7 +101,10 @@ export function extractText(content: unknown): string {
     } else if (part && typeof part === "object") {
       const p = part as Record<string, unknown>;
       if (typeof p.Text === "string") parts.push(p.Text);
-      else if (p.Media) parts.push(`[${String((p.Media as Record<string, unknown>).kind ?? "media").toLowerCase()}]`);
+      else if (p.Media)
+        parts.push(
+          `[${String((p.Media as Record<string, unknown>).kind ?? "media").toLowerCase()}]`,
+        );
     }
   }
   return parts.join("\n");
@@ -110,8 +118,14 @@ export function sleep(ms: number): Promise<void> {
 // Tool schemas
 // ---------------------------------------------------------------------------
 
-export const pcBin = Type.Optional(Type.String({ description: "Path to the pc sidecar binary (default: $PC_BIN, repo target/, or PATH)" }));
-export const config = Type.Optional(Type.String({ description: "Path to a pc JSON config file (default: $PC_CONFIG)" }));
+export const pcBin = Type.Optional(
+  Type.String({
+    description: "Path to the pc sidecar binary (default: $PC_BIN, repo target/, or PATH)",
+  }),
+);
+export const config = Type.Optional(
+  Type.String({ description: "Path to a pc JSON config file (default: $PC_CONFIG)" }),
+);
 
 export const pcCheckParams = Type.Object({
   provider: Type.Optional(Type.String({ description: "Only report this provider id" })),

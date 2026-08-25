@@ -49,7 +49,9 @@ export function adaptBunSpawn(proc: {
 }): ChildLike {
   const stdin = proc.stdin as { write(chunk: string): unknown; end(): unknown };
   const stdout = proc.stdout as { on(event: string, cb: (...args: unknown[]) => void): unknown };
-  const stderr = proc.stderr as { on(event: string, cb: (...args: unknown[]) => void): unknown } | undefined;
+  const stderr = proc.stderr as
+    | { on(event: string, cb: (...args: unknown[]) => void): unknown }
+    | undefined;
   const child: ChildLike = {
     pid: proc.pid,
     stdin: stdin ?? { write() {}, end() {} },
@@ -114,14 +116,20 @@ export class PcClient extends EventEmitter {
     super();
     this.child = child;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
-    this.rl = attachNdjsonReader(child.stdout as unknown as NodeJS.ReadableStream, (line) => this.onLine(line));
+    this.rl = attachNdjsonReader(child.stdout as unknown as NodeJS.ReadableStream, (line) =>
+      this.onLine(line),
+    );
     child.on("exit", (code: unknown, signal: unknown) => {
       this.exited = true;
       for (const { reject } of this.pending.values()) {
-        reject(new Error(`pc exited (code=${String(code)} signal=${String(signal)}) before responding`));
+        reject(
+          new Error(`pc exited (code=${String(code)} signal=${String(signal)}) before responding`),
+        );
       }
       this.pending.clear();
-      try { this.rl.close(); } catch {}
+      try {
+        this.rl.close();
+      } catch {}
       this.emit("exit", { code: code as number | null, signal: signal as NodeJS.Signals | null });
     });
   }
@@ -134,19 +142,27 @@ export class PcClient extends EventEmitter {
   ): PcClient {
     const spawnFn: SpawnFn =
       options.spawnFn ??
-      ((b, a, o) => spawn(b, a, { stdio: ["pipe", "pipe", "inherit"], env: o.env }) as unknown as ChildLike);
+      ((b, a, o) =>
+        spawn(b, a, { stdio: ["pipe", "pipe", "inherit"], env: o.env }) as unknown as ChildLike);
     const child = spawnFn(bin, args, { stdio: ["pipe", "pipe", "inherit"], env });
     return new PcClient(child, options);
   }
 
-  get isRunning(): boolean { return !this.exited; }
-  get pid(): number | undefined { return this.child.pid; }
+  get isRunning(): boolean {
+    return !this.exited;
+  }
+  get pid(): number | undefined {
+    return this.child.pid;
+  }
 
   private onLine(line: string): void {
     const parsed = parseLine(line);
     if (parsed.kind === "empty") return;
     if (parsed.kind === "parse-error") {
-      this.emit("protocol-error", new Error(`unparseable stdout line: ${parsed.raw.slice(0, 200)} (${String(parsed.error)})`));
+      this.emit(
+        "protocol-error",
+        new Error(`unparseable stdout line: ${parsed.raw.slice(0, 200)} (${String(parsed.error)})`),
+      );
       return;
     }
     if (parsed.kind === "response") {
@@ -179,7 +195,10 @@ export class PcClient extends EventEmitter {
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      if (this.exited) { reject(new Error("pc is not running")); return; }
+      if (this.exited) {
+        reject(new Error("pc is not running"));
+        return;
+      }
       const id = this.nextId++;
       const frame: Record<string, unknown> = { jsonrpc: "2.0", id, method };
       if (params !== undefined) frame.params = params;
@@ -211,8 +230,16 @@ export class PcClient extends EventEmitter {
       if (this.exited) return resolve();
       this.once("exit", () => resolve());
     });
-    try { await this.request("shutdown"); } catch { /* sidecar gone */ }
-    try { this.child.stdin.end(); } catch { /* already closed */ }
+    try {
+      await this.request("shutdown");
+    } catch {
+      /* sidecar gone */
+    }
+    try {
+      this.child.stdin.end();
+    } catch {
+      /* already closed */
+    }
     const timer = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
     await Promise.race([exited, timer]);
     if (!this.exited) this.kill();
@@ -220,8 +247,14 @@ export class PcClient extends EventEmitter {
 
   kill(): void {
     if (this.exited) return;
-    try { this.child.kill("SIGTERM"); } catch { /* best effort */ }
+    try {
+      this.child.kill("SIGTERM");
+    } catch {
+      /* best effort */
+    }
   }
 
-  [Symbol.asyncDispose]?(): Promise<void> { return this.shutdown(); }
+  [Symbol.asyncDispose]?(): Promise<void> {
+    return this.shutdown();
+  }
 }

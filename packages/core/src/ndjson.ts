@@ -21,7 +21,12 @@ export interface JsonRpcResponse {
 }
 
 export type ParsedLine =
-  | { kind: "response"; id: number; result?: unknown; error?: { code: number; message: string; data?: unknown } }
+  | {
+      kind: "response";
+      id: number;
+      result?: unknown;
+      error?: { code: number; message: string; data?: unknown };
+    }
   | { kind: "message"; message: unknown }
   | { kind: "provider-error"; error: unknown }
   | { kind: "notification"; method: string; params: unknown }
@@ -36,7 +41,11 @@ export function parseLine(line: string): ParsedLine {
   try {
     msg = JSON.parse(trimmed) as JsonRpcResponse;
   } catch (err) {
-    return { kind: "parse-error", raw: line.slice(0, 500), error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      kind: "parse-error",
+      raw: line.slice(0, 500),
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
   if (msg.id !== undefined && msg.id !== null) {
     if (msg.error) {

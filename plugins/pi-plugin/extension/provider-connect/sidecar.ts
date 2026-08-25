@@ -13,7 +13,10 @@ export interface PcFrame {
 export class PcSidecar {
   private child;
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   private notifications: PcFrame[] = [];
   private readerDone: Promise<void>;
 
