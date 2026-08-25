@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.24"
 async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
