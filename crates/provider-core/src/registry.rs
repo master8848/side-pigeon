@@ -41,6 +41,11 @@ impl ProviderRegistry {
         &self.events
     }
 
+    /// Replace the shared event sink (used by `AppState::with_event_bus`).
+    pub fn set_events(&mut self, events: Arc<dyn ProviderEvents>) {
+        self.events = events;
+    }
+
     /// Register a provider. Fails with [`ProviderError::Protocol`] if a
     /// provider with the same id is already registered.
     pub fn register(&mut self, provider: Box<dyn ChatProvider>) -> Result<(), ProviderError> {

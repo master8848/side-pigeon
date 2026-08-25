@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::events::ErrorEvent;
+use provider_core::client::EventBus;
 use provider_core::{ChannelMessage, ProviderError, ProviderEvents, ProviderRegistry, SendMessage};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -43,6 +44,7 @@ pub struct AppState {
     registry: ProviderRegistry,
     notify: broadcast::Sender<Outbound>,
     shutdown: bool,
+    event_bus: Option<EventBus>,
 }
 
 impl AppState {
@@ -50,16 +52,74 @@ impl AppState {
     /// to the transport (stdio: one subscription; ws: one per connection;
     /// http: none — notifications are dropped, responses are returned inline).
     pub fn new(transport: &str) -> (Self, broadcast::Sender<Outbound>) {
+        Self::new_with_transports(vec![transport.to_string()])
+    }
+
+    /// Create state advertising multiple transports (e.g. `["stdio","http","ws"]`
+    /// for `pc serve`). Backward-compatible wrapper around [`AppState::new`].
+    pub fn new_with_transports(transports: Vec<String>) -> (Self, broadcast::Sender<Outbound>) {
+        let transports = if transports.is_empty() {
+            vec!["stdio".to_string()]
+        } else {
+            transports
+        };
         let (tx, _rx) = broadcast::channel(OUTBOUND_CAPACITY);
         let events: Arc<dyn ProviderEvents> = Arc::new(NotifyEvents { tx: tx.clone() });
         let state = AppState {
             protocol_version: env!("CARGO_PKG_VERSION").to_string(),
-            transport: vec![transport.to_string()],
+            transport: transports,
             registry: ProviderRegistry::new(events),
             notify: tx.clone(),
             shutdown: false,
+            event_bus: None,
         };
         (state, tx)
+    }
+
+    /// Append an additional transport to the advertised capabilities (builder-style).
+    pub fn with_transport(mut self, transport: impl Into<String>) -> Self {
+        let t = transport.into();
+        if !self.transport.contains(&t) {
+            self.transport.push(t);
+        }
+        self
+    }
+
+    /// Install a headless [`EventBus`] as the provider event sink.
+    ///
+    /// When a bus is present, every inbound `ChannelMessage` first runs the
+    /// bus's plugin chain and only then fans out to local typed subscribers
+    /// AND to the JSON-RPC `broadcast::Sender<Outbound>`. Messages dropped by
+    /// a plugin never reach either sink. Rewrites are forwarded as the mutated
+    /// message. The JSON-RPC wire is unchanged.
+    pub fn with_event_bus(mut self, bus: EventBus) -> Self {
+        let tx = self.notify.clone();
+        let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents { tx, bus: bus.clone() });
+        self.registry.set_events(bridge);
+        self.event_bus = Some(bus);
+        self
+    }
+
+    /// Borrow the installed event bus, if any.
+    pub fn event_bus(&self) -> Option<&EventBus> {
+        self.event_bus.as_ref()
+    }
+
+    /// Push a plugin onto the installed bus. If no bus is installed yet, a
+    /// fresh bus is created, bridged, and stored. Returns `&mut Self` for
+    /// builder chaining.
+    pub fn with_plugin<P: provider_core::Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
+        if self.event_bus.is_none() {
+            let bus = EventBus::new();
+            let tx = self.notify.clone();
+            let bridge: Arc<dyn ProviderEvents> = Arc::new(BridgeEvents { tx, bus: bus.clone() });
+            self.registry.set_events(bridge);
+            self.event_bus = Some(bus);
+        }
+        if let Some(bus) = &self.event_bus {
+            bus.use_plugin(plugin);
+        }
+        self
     }
 
     /// The shared event sink (hand this to providers at construction).
@@ -248,6 +308,37 @@ impl ProviderEvents for NotifyEvents {
     }
 
     fn on_error(&self, provider: &str, error: &ProviderError) {
+        let notification = error_notification(provider, error);
+        if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
+            tracing::debug!(error = %err, "dropping event.error (no receivers)");
+        }
+    }
+}
+
+/// Bridge that runs the headless plugin chain AND forwards to JSON-RPC.
+///
+/// `on_message` first calls `bus.publish_filtered` so plugins can drop or
+/// rewrite. Dropped messages never reach the broadcast channel or the local
+/// typed subscribers. Non-dropped messages fan out to both: the bus's local
+/// callbacks (via the publish call) and the JSON-RPC `broadcast::Sender`.
+struct BridgeEvents {
+    tx: broadcast::Sender<Outbound>,
+    bus: EventBus,
+}
+
+impl ProviderEvents for BridgeEvents {
+    fn on_message(&self, msg: ChannelMessage) {
+        let Some((_, filtered)) = self.bus.publish_filtered(msg) else {
+            return;
+        };
+        let notification = Notification::message(&filtered);
+        if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
+            tracing::debug!(error = %err, "dropping event.message (no receivers)");
+        }
+    }
+
+    fn on_error(&self, provider: &str, error: &ProviderError) {
+        self.bus.publish_error(provider, error);
         let notification = error_notification(provider, error);
         if let Err(err) = self.tx.send(Outbound::Notification(notification)) {
             tracing::debug!(error = %err, "dropping event.error (no receivers)");

@@ -36,7 +36,13 @@ pub mod traits;
 #[cfg(feature = "registry")]
 pub mod registry;
 
+pub mod plugin;
+
+#[cfg(feature = "registry")]
+pub mod client;
+
 pub use error::ProviderError;
+pub use plugin::{AllowListPlugin, ControlFlow, DedupPlugin, LoggerPlugin, Plugin};
 pub use schema::{
     ChannelMessage, ContentPart, MediaAttachment, MediaKind, SendMessage, SendReceipt, Sender,
 };
@@ -44,3 +50,5 @@ pub use traits::{ChatProvider, ProviderEvents, TRANSIENT_ERROR_EVENT_THRESHOLD};
 
 #[cfg(feature = "registry")]
 pub use registry::ProviderRegistry;
+#[cfg(feature = "registry")]
+pub use client::{EventBus, EventFilter, ProviderClient, ProviderClientBuilder, Subscription};
