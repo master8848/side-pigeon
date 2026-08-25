@@ -60,7 +60,8 @@ pub enum ContentPart {
 }
 
 /// A media attachment. Bytes are optional: ship `data` (base64-encoded by the
-/// JSON-RPC layer) for small files; use `url` refs / temp files for large ones.
+/// JSON-RPC layer — see [`base64_bytes`]) for small files; use `url` refs /
+/// temp files for large ones.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaAttachment {
     /// Media classification.
@@ -69,10 +70,50 @@ pub struct MediaAttachment {
     pub url: Option<String>,
     /// MIME type, when known.
     pub mime: Option<String>,
-    /// Inline bytes (small files only).
+    /// Inline bytes (small files only), base64-encoded on the wire.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "base64_bytes"
+    )]
     pub data: Option<Vec<u8>>,
     /// Caption / alt text.
     pub caption: Option<String>,
+}
+
+/// Serde adapter: `Option<Vec<u8>>` <-> base64 string (RFC 4648 §4).
+///
+/// The wire contract promises base64 (`"data": "AQID/w=="`), but v0.1 shipped
+/// raw JSON byte arrays — fixed here (review P2: docs and impl disagreed).
+pub mod base64_bytes {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+
+    /// Serialize bytes as a base64 string (`null` when absent).
+    pub fn serialize<S>(data: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match data {
+            Some(bytes) => serializer.serialize_str(&STANDARD.encode(bytes)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Deserialize a base64 string back into bytes (`null`/missing -> `None`).
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Option::<String>::deserialize(deserializer)? {
+            Some(encoded) => STANDARD
+                .decode(&encoded)
+                .map(Some)
+                .map_err(|e| D::Error::custom(format!("invalid base64 data: {e}"))),
+            None => Ok(None),
+        }
+    }
 }
 
 /// Media classification.

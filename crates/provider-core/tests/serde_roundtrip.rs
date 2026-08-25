@@ -81,11 +81,18 @@ fn send_message_round_trip() {
     let back: SendMessage = serde_json::from_str(&json).unwrap();
     assert_eq!(msg, back);
     let v = serde_json::to_value(&msg).unwrap();
-    assert_eq!(
-        v["attachments"][0]["data"],
-        serde_json::json!([1, 2, 3, 255])
-    );
+    // Wire format is base64 (contract promise), not a raw byte array.
+    assert_eq!(v["attachments"][0]["data"], serde_json::json!("AQID/w=="));
     assert_eq!(v["attachments"][0]["kind"], "Audio");
+    // And a base64 payload round-trips back to the original bytes.
+    let decoded: SendMessage = serde_json::from_str(
+        r#"{"channel_id":"c","text":"t","attachments":[{"kind":"Audio","data":"AQID/w=="}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        decoded.attachments[0].data.as_deref(),
+        Some(&[1, 2, 3, 255][..])
+    );
 }
 
 #[test]

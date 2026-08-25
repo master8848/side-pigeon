@@ -16,6 +16,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+# Wire format: MediaAttachment.data is base64-encoded by the JSON-RPC layer
+# (contract promise). base64 0.22.1 is already in the lockfile (transitive);
+# making it a direct dep pins the wire codec. Published 2024-01-26 (>=14d).
+base64 = "0.22" 
 
 [dev-dependencies]
 tokio = { workspace = true }
