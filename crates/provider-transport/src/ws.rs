@@ -20,11 +20,39 @@ use crate::error::TransportError;
 use crate::jsonrpc::parse_request;
 use crate::state::{dropped_frames_notification, AppState, DispatchOutcome, Outbound};
 
-fn is_allowed_ws_origin(origin: &str) -> bool {
-    // Allow only loopback origins for WebSocket upgrades.
-    origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]")
+const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB — matches http.rs
+
+fn extract_origin_host(origin: &str) -> Option<String> {
+    let scheme_end = origin.find("://")?;
+    let after = &origin[scheme_end + 3..];
+    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
+    let authority = &after[..end];
+    if authority.is_empty() {
+        return None;
+    }
+    if authority.starts_with('[') {
+        let closing = authority.find(']')?;
+        Some(authority[1..closing].to_ascii_lowercase())
+    } else if authority == "::1" || authority.starts_with("::1:") {
+        Some("::1".to_string())
+    } else {
+        let host_part = authority.rsplit('@').next().unwrap_or(authority);
+        let host = host_part.split(':').next().unwrap_or(host_part);
+        if host.is_empty() {
+            return None;
+        }
+        Some(host.to_ascii_lowercase())
+    }
 }
 
+fn is_allowed_ws_origin(origin: &str) -> bool {
+    match extract_origin_host(origin) {
+        Some(host) => host == "127.0.0.1" || host == "localhost" || host == "::1",
+        None => false,
+    }
+}
+
+#[allow(clippy::result_large_err)]
 fn ws_origin_callback(
     req: &tokio_tungstenite::tungstenite::handshake::server::Request,
     resp: tokio_tungstenite::tungstenite::handshake::server::Response,
@@ -101,7 +129,17 @@ async fn handle_connection(
     notify_tx: broadcast::Sender<Outbound>,
     stream: TcpStream,
 ) -> Result<(), TransportError> {
-    let websocket = tokio_tungstenite::accept_hdr_async(stream, ws_origin_callback).await?;
+    let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+        max_message_size: Some(MAX_BODY_BYTES),
+        max_frame_size: Some(MAX_BODY_BYTES),
+        ..Default::default()
+    };
+    let websocket = tokio_tungstenite::accept_hdr_async_with_config(
+        stream,
+        ws_origin_callback,
+        Some(ws_config),
+    )
+    .await?;
     let (mut sink, mut source) = websocket.split();
 
     // Per-connection outbound queue: responses (this handler) + notifications

@@ -36,7 +36,11 @@ use tracing_subscriber::EnvFilter;
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "pc", version, about = "provider-connect sidecar (JSON-RPC 2.0 over stdio)")]
+#[command(
+    name = "pc",
+    version,
+    about = "provider-connect sidecar (JSON-RPC 2.0 over stdio)"
+)]
 struct Cli {
     /// Path to a JSON config file
     #[arg(long, short = 'c', global = true, value_name = "PATH")]
@@ -109,6 +113,9 @@ enum Commands {
         /// Disable SQLite persistence (stay in-memory even with persist feature)
         #[arg(long)]
         no_persist: bool,
+        /// Allow binding to 0.0.0.0 / [::] (public). Without this, unspecified addresses are rejected
+        #[arg(long)]
+        public: bool,
     },
     /// Dev server — alias for `serve --watch` (Rsbuild analog)
     Dev {
@@ -124,6 +131,9 @@ enum Commands {
         /// Disable SQLite persistence
         #[arg(long)]
         no_persist: bool,
+        /// Allow binding to 0.0.0.0 / [::] (public). Without this, unspecified addresses are rejected
+        #[arg(long)]
+        public: bool,
     },
     /// Scaffold a new provider-connect config (stub)
     Init,
@@ -174,6 +184,7 @@ fn main() -> ExitCode {
             watch,
             persist,
             no_persist,
+            public,
         }) => run_serve(ServeArgs {
             config_path,
             ws,
@@ -181,12 +192,14 @@ fn main() -> ExitCode {
             watch,
             persist,
             no_persist,
+            public,
         }),
         Some(Commands::Dev {
             ws,
             http,
             persist,
             no_persist,
+            public,
         }) => run_serve(ServeArgs {
             config_path,
             ws,
@@ -194,6 +207,7 @@ fn main() -> ExitCode {
             watch: true,
             persist,
             no_persist,
+            public,
         }),
         Some(Commands::Init) => run_init(),
     }
@@ -208,15 +222,35 @@ fn run_init() -> ExitCode {
     let json_path = cwd.join("pc.config.json");
     let ts_path = cwd.join("pc.config.ts");
     if json_path.exists() || ts_path.exists() {
-        let existing = if json_path.exists() { &json_path } else { &ts_path };
-        eprintln!("pc init: config already exists at {} — leaving it untouched", existing.display());
+        let existing = if json_path.exists() {
+            &json_path
+        } else {
+            &ts_path
+        };
+        eprintln!(
+            "pc init: config already exists at {} — leaving it untouched",
+            existing.display()
+        );
         return ExitCode::SUCCESS;
     }
     let content = "{\n  \"providers\": [{ \"id\": \"demo\", \"config\": {} }]\n}\n";
     match std::fs::write(&json_path, content) {
         Ok(()) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(parent) = json_path.parent() {
+                    let _ =
+                        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+                }
+                let _ =
+                    std::fs::set_permissions(&json_path, std::fs::Permissions::from_mode(0o600));
+            }
             println!("pc init: wrote {}", json_path.display());
-            println!("hint: pc check --config {}  |  pc serve", json_path.display());
+            println!(
+                "hint: pc check --config {}  |  pc serve",
+                json_path.display()
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -335,7 +369,7 @@ fn build_app_state_with_transports(
 ) -> Result<(AppState, broadcast::Sender<Outbound>), String> {
     let (mut state, notify_tx) = AppState::new_with_transports(transports);
     let events = state.events();
-    register_providers(config, state.registry_mut(), &events).map_err(|e| e)?;
+    register_providers(config, state.registry_mut(), &events)?;
     drop(events);
     Ok((state, notify_tx))
 }
@@ -347,6 +381,7 @@ struct ServeArgs {
     watch: bool,
     persist: Option<String>,
     no_persist: bool,
+    public: bool,
 }
 
 /// Convenience helper returning just the registry (spec name).
@@ -663,7 +698,10 @@ async fn stop_quietly(state: &mut AppState) {
 
 // -- send
 
-async fn op_send(opts: SendOptions, config: provider_config::SidecarConfig) -> Result<SendReceipt, CliError> {
+async fn op_send(
+    opts: SendOptions,
+    config: provider_config::SidecarConfig,
+) -> Result<SendReceipt, CliError> {
     let (mut state, _notify_tx) = build_state_for_ops(&config)?;
     resolve_targets(&state, Some(std::slice::from_ref(&opts.provider)))?;
 
@@ -690,7 +728,10 @@ async fn op_send(opts: SendOptions, config: provider_config::SidecarConfig) -> R
 
 // -- listen
 
-async fn op_listen(opts: ListenOptions, config: provider_config::SidecarConfig) -> Result<(), CliError> {
+async fn op_listen(
+    opts: ListenOptions,
+    config: provider_config::SidecarConfig,
+) -> Result<(), CliError> {
     let (mut state, notify_tx) = build_state_for_ops(&config)?;
     let targets = resolve_targets(&state, opts.providers.as_deref())?;
     let mut rx = notify_tx.subscribe();
@@ -828,20 +869,24 @@ async fn check_one(
     caps: &serde_json::Value,
     notify_tx: &broadcast::Sender<Outbound>,
 ) -> SmokeOutcome {
+    let kind = provider_core::alias::provider_kind(id, config_value);
+    let alias_static = provider_core::alias::leak_alias(id);
+    let alias_events = provider_core::alias::AliasEvents::wrap(alias_static, events.clone());
     tracing::info!(
         protocol = %caps["protocolVersion"],
         provider = %id,
+        kind = %kind,
         "check: initialize + capabilities ok"
     );
-    match id {
+    match kind {
         #[cfg(feature = "demo")]
-        "demo" => check_demo(config_value, events, notify_tx).await,
+        "demo" => check_demo(config_value, &alias_events, notify_tx).await,
         #[cfg(feature = "telegram")]
-        "telegram" => check_telegram(config_value, events).await,
+        "telegram" => check_telegram(config_value, &alias_events).await,
         #[cfg(feature = "discord")]
-        "discord" => check_discord(config_value, events).await,
+        "discord" => check_discord(config_value, &alias_events).await,
         other => SmokeOutcome::Fail(CliError::protocol(format!(
-            "unknown provider '{other}' (compiled in: {})",
+            "unknown provider kind '{other}' for alias '{id}' (compiled in: {})",
             available_providers().join(", ")
         ))),
     }
@@ -933,7 +978,7 @@ fn build_telegram_concrete(
 ) -> Result<provider_telegram::TelegramProvider, String> {
     let token = config_token("telegram", config)?;
     let mut provider = provider_telegram::TelegramProvider::new(token, events);
-    if let Some(base) = config_str("telegram", config, "base_url")? {
+    if let Some(base) = config_str_alt("telegram", config, &["base_url", "baseUrl"])? {
         provider = provider.with_base_url(base);
     }
     if let Some(secs) = config_u64("telegram", config, "poll_interval_secs")? {
@@ -955,10 +1000,10 @@ fn build_discord_concrete(
 ) -> Result<provider_discord::DiscordProvider, String> {
     let token = config_token("discord", config)?;
     let mut provider = provider_discord::DiscordProvider::new(token, events);
-    if let Some(url) = config_str("discord", config, "gateway_url")? {
+    if let Some(url) = config_str_alt("discord", config, &["gateway_url", "gatewayUrl"])? {
         provider = provider.with_gateway_url(url);
     }
-    if let Some(base) = config_str("discord", config, "rest_base")? {
+    if let Some(base) = config_str_alt("discord", config, &["rest_base", "restBase"])? {
         provider = provider.with_rest_base(base);
     }
     if let Some(intents) = config_u64("discord", config, "intents")? {
@@ -973,27 +1018,39 @@ fn build_discord_concrete(
 // ---------------------------------------------------------------------------
 // Feature-gated provider construction (shared by sidecar + ops)
 // ---------------------------------------------------------------------------
-
+// TODO(P2): extract to provider-config::factory - see docs/POLISH.md P2
 fn build_provider(
     id: &str,
     config: &serde_json::Value,
     events: Arc<dyn ProviderEvents>,
 ) -> Result<Box<dyn ChatProvider>, String> {
-    match id {
+    let kind = provider_core::alias::provider_kind(id, config);
+    let alias_static = provider_core::alias::leak_alias(id);
+    let events = provider_core::alias::AliasEvents::wrap(alias_static, events);
+    match kind {
         #[cfg(feature = "demo")]
-        "demo" => Ok(Box::new(demo::DemoProvider::new(events, config))),
+        "demo" => Ok(Box::new(provider_core::alias::AliasedProvider::new(
+            alias_static,
+            Box::new(demo::DemoProvider::new(events, config)),
+        ))),
         #[cfg(feature = "telegram")]
         "telegram" => {
             let p = build_telegram_concrete(config, events)?;
-            Ok(Box::new(p))
+            Ok(Box::new(provider_core::alias::AliasedProvider::new(
+                alias_static,
+                Box::new(p),
+            )))
         }
         #[cfg(feature = "discord")]
         "discord" => {
             let p = build_discord_concrete(config, events)?;
-            Ok(Box::new(p))
+            Ok(Box::new(provider_core::alias::AliasedProvider::new(
+                alias_static,
+                Box::new(p),
+            )))
         }
         other => Err(format!(
-            "unknown provider '{other}' (compiled in: {})",
+            "unknown provider kind '{other}' for alias '{id}' (compiled in: {})",
             available_providers().join(", ")
         )),
     }
@@ -1009,6 +1066,7 @@ fn config_token(id: &str, config: &serde_json::Value) -> Result<String, String> 
 }
 
 #[cfg(any(feature = "telegram", feature = "discord"))]
+#[allow(dead_code)]
 fn config_str(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
     match config.get(key) {
         None => Ok(None),
@@ -1017,6 +1075,26 @@ fn config_str(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<
             .map(|s| Some(s.to_string()))
             .ok_or_else(|| format!("provider '{id}' config.{key} must be a string")),
     }
+}
+
+#[cfg(any(feature = "telegram", feature = "discord"))]
+fn config_str_alt(
+    id: &str,
+    config: &serde_json::Value,
+    keys: &[&str],
+) -> Result<Option<String>, String> {
+    for key in keys {
+        match config.get(*key) {
+            None => continue,
+            Some(v) => {
+                return v
+                    .as_str()
+                    .map(|s| Some(s.to_string()))
+                    .ok_or_else(|| format!("provider '{id}' config.{key} must be a string"));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(any(feature = "telegram", feature = "discord"))]
@@ -1047,7 +1125,7 @@ fn available_providers() -> Vec<&'static str> {
 
 fn parse_listen_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
     let s = if raw.starts_with(':') {
-        format!("0.0.0.0{raw}")
+        format!("127.0.0.1{raw}")
     } else {
         raw.to_string()
     };
@@ -1063,10 +1141,14 @@ fn run_serve(args: ServeArgs) -> ExitCode {
         watch,
         persist,
         no_persist,
+        public,
     } = args;
     init_tracing();
     let (ws_addr, http_addr) = match (ws, http) {
-        (None, None) => (Some(":8787".to_string()), Some(":8788".to_string())),
+        (None, None) => (
+            Some("127.0.0.1:8787".to_string()),
+            Some("127.0.0.1:8788".to_string()),
+        ),
         (w, h) => (w, h),
     };
     let watch_config_path = config_path.clone();
@@ -1109,6 +1191,17 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             let path = persist
                 .or_else(|| std::env::var("PC_PERSIST_PATH").ok())
                 .unwrap_or_else(|| "./pc-events.db".to_string());
+            if path.contains("..")
+                || path.contains(':')
+                || path.contains('?')
+                || path.contains("file:")
+            {
+                eprintln!(
+                    "pc: refusing persist path with traversal/uri chars: {}",
+                    path
+                );
+                return ExitCode::FAILURE;
+            }
             match state.with_persist(&path) {
                 Ok(s) => {
                     tracing::info!(path = %path, "persist enabled (WAL sqlite)");
@@ -1129,13 +1222,21 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
         if std::env::var("PC_PERSIST_PATH").is_ok() {
-            eprintln!("pc: PC_PERSIST_PATH set but binary built without --features persist — ignoring");
+            eprintln!(
+                "pc: PC_PERSIST_PATH set but binary built without --features persist — ignoring"
+            );
         }
     }
     tracing::info!(providers = ?state.registry().ids(), "providers registered for serve");
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
-        Err(e) => { eprintln!("pc: failed to build tokio runtime: {e}"); return ExitCode::FAILURE; }
+        Err(e) => {
+            eprintln!("pc: failed to build tokio runtime: {e}");
+            return ExitCode::FAILURE;
+        }
     };
     let state = std::sync::Arc::new(tokio::sync::Mutex::new(state));
     #[cfg(feature = "ws")]
@@ -1147,8 +1248,17 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     let result: Result<(), String> = runtime.block_on(async move {
         let http_listener: Option<tokio::net::TcpListener> = match http_addr {
             Some(raw) => {
-                let addr = parse_listen_addr(&raw).map_err(|e| e)?;
-                let l = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind http {raw}: {e}"))?;
+                let addr = parse_listen_addr(&raw)?;
+                if addr.ip().is_unspecified() && !public {
+                    tracing::warn!(addr = %addr, "refusing to bind to unspecified address without --public (use --public to allow 0.0.0.0 / [::])");
+                    return Err(format!(
+                        "refusing to bind http to {addr} without --public; pass --public to allow public binding or use 127.0.0.1:{}",
+                        addr.port()
+                    ));
+                }
+                let l = tokio::net::TcpListener::bind(addr)
+                    .await
+                    .map_err(|e| format!("bind http {raw}: {e}"))?;
                 tracing::info!(addr = %l.local_addr().map_err(|e| e.to_string())?, "http listening");
                 Some(l)
             }
@@ -1156,8 +1266,17 @@ fn run_serve(args: ServeArgs) -> ExitCode {
         };
         let ws_listener: Option<tokio::net::TcpListener> = match ws_addr {
             Some(raw) => {
-                let addr = parse_listen_addr(&raw).map_err(|e| e)?;
-                let l = tokio::net::TcpListener::bind(addr).await.map_err(|e| format!("bind ws {raw}: {e}"))?;
+                let addr = parse_listen_addr(&raw)?;
+                if addr.ip().is_unspecified() && !public {
+                    tracing::warn!(addr = %addr, "refusing to bind to unspecified address without --public (use --public to allow 0.0.0.0 / [::])");
+                    return Err(format!(
+                        "refusing to bind ws to {addr} without --public; pass --public to allow public binding or use 127.0.0.1:{}",
+                        addr.port()
+                    ));
+                }
+                let l = tokio::net::TcpListener::bind(addr)
+                    .await
+                    .map_err(|e| format!("bind ws {raw}: {e}"))?;
                 tracing::info!(addr = %l.local_addr().map_err(|e| e.to_string())?, "ws listening");
                 Some(l)
             }
@@ -1241,7 +1360,9 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     });
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => { eprintln!("pc serve: {e}"); ExitCode::FAILURE }
+        Err(e) => {
+            eprintln!("pc serve: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
-

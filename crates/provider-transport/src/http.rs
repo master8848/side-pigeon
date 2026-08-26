@@ -10,31 +10,32 @@
 //! ```
 //! Keeps stdio primary; enabled via `pc serve --http :8788 --ws :8787`.
 //!
-//! # Security note — TLS
-//! Plaintext HTTP here is **localhost-only** by design. Production deployments
-//! MUST place a reverse-proxy (nginx, Caddy, Fly, etc.) in front that
+//! # Security note — TLS + bind address
+//! Plaintext HTTP here is **localhost-only** by default (`127.0.0.1:8787` / `127.0.0.1:8788`).
+//! Binding to an unspecified address (`0.0.0.0` / `[::]`) requires `pc serve --public`
+//! and MUST be paired with a reverse-proxy (nginx, Caddy, Fly, etc.) that
 //! terminates TLS and enforces authentication. Do not expose the raw listener
-//! directly to the public internet.
+//! directly to the public internet without `--public`.
 #![allow(clippy::too_many_lines)]
 
 use std::sync::Arc;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
+use http_body_util::{combinators::BoxBody, BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request as HttpRequest, Response as HttpResponse, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Semaphore, broadcast};
+use tokio::sync::{broadcast, Mutex, Semaphore};
 
 use crate::error::TransportError;
-use crate::jsonrpc::{Id, JsonRpcError};
 use crate::jsonrpc::parse_request;
-use crate::state::{AppState, DispatchOutcome, Outbound, provider_error};
+use crate::jsonrpc::{Id, JsonRpcError};
 use crate::state::dropped_frames_notification;
+use crate::state::{provider_error, AppState, DispatchOutcome, Outbound};
 
 /// Accept HTTP connections on `listener` and serve REST + JSON-RPC.
 pub async fn serve_http(
@@ -105,18 +106,91 @@ fn query_param(uri: &hyper::Uri, key: &str) -> Option<String> {
 
 const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
 
-fn is_allowed_http_origin(origin: &str) -> bool {
-    // Allow only loopback origins. Covers http://127.0.0.1[:port], http://localhost[:port], http://[::1][:port]
-    origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]")
+fn content_length_exceeds(req: &HttpRequest<Incoming>) -> bool {
+    if let Some(v) = req.headers().get(hyper::header::CONTENT_LENGTH) {
+        if let Ok(s) = v.to_str() {
+            if let Ok(n) = s.parse::<usize>() {
+                return n > MAX_BODY_BYTES;
+            }
+        }
+    }
+    false
 }
 
-fn with_cors(mut resp: HttpResponse<BoxBodyType>, origin: Option<&str>) -> HttpResponse<BoxBodyType> {
+fn payload_too_large(origin: Option<&str>) -> HttpResponse<BoxBodyType> {
+    with_cors(
+        text_body(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload too large (max 1 MiB)".to_string(),
+        ),
+        origin,
+    )
+}
+
+fn extract_origin_host(origin: &str) -> Option<String> {
+    let scheme_end = origin.find("://")?;
+    let after = &origin[scheme_end + 3..];
+    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
+    let authority = &after[..end];
+    if authority.is_empty() {
+        return None;
+    }
+    if authority.starts_with('[') {
+        let closing = authority.find(']')?;
+        Some(authority[1..closing].to_ascii_lowercase())
+    } else if authority == "::1" || authority.starts_with("::1:") {
+        Some("::1".to_string())
+    } else {
+        let host_part = authority.rsplit('@').next().unwrap_or(authority);
+        let host = host_part.split(':').next().unwrap_or(host_part);
+        if host.is_empty() {
+            return None;
+        }
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+fn is_allowed_http_origin(origin: &str) -> bool {
+    match extract_origin_host(origin) {
+        Some(host) => host == "127.0.0.1" || host == "localhost" || host == "::1",
+        None => false,
+    }
+}
+
+fn cors_allowed_headers() -> &'static str {
+    // Only advertise `authorization` when the server actually enforces it
+    // (opt-in via `PC_AUTH_TOKEN`). Advertising it unconditionally would
+    // invite browsers to send credentials that we silently ignore.
+    if std::env::var("PC_AUTH_TOKEN")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+    {
+        "content-type, authorization"
+    } else {
+        "content-type"
+    }
+}
+
+fn with_cors(
+    mut resp: HttpResponse<BoxBodyType>,
+    origin: Option<&str>,
+) -> HttpResponse<BoxBodyType> {
     if let Some(o) = origin {
         if is_allowed_http_origin(o) {
             let headers = resp.headers_mut();
-            headers.insert("access-control-allow-origin", o.parse().unwrap_or_else(|_| "http://127.0.0.1".parse().unwrap()));
-            headers.insert("access-control-allow-methods", "GET, POST, OPTIONS".parse().unwrap());
-            headers.insert("access-control-allow-headers", "content-type, authorization".parse().unwrap());
+            headers.insert(
+                "access-control-allow-origin",
+                o.parse()
+                    .unwrap_or_else(|_| "http://127.0.0.1".parse().unwrap()),
+            );
+            headers.insert(
+                "access-control-allow-methods",
+                "GET, POST, OPTIONS".parse().unwrap(),
+            );
+            headers.insert(
+                "access-control-allow-headers",
+                cors_allowed_headers().parse().unwrap(),
+            );
             headers.insert("vary", "Origin".parse().unwrap());
         }
     }
@@ -137,13 +211,16 @@ async fn handle_http(
     if req.method() == Method::OPTIONS {
         if let Some(ref origin) = origin_hdr {
             if !is_allowed_http_origin(origin) {
-                return Ok(text_body(StatusCode::FORBIDDEN, "forbidden origin".to_string()));
+                return Ok(text_body(
+                    StatusCode::FORBIDDEN,
+                    "forbidden origin".to_string(),
+                ));
             }
             let resp = HttpResponse::builder()
                 .status(StatusCode::NO_CONTENT)
                 .header("access-control-allow-origin", origin.as_str())
                 .header("access-control-allow-methods", "GET, POST, OPTIONS")
-                .header("access-control-allow-headers", "content-type, authorization")
+                .header("access-control-allow-headers", cors_allowed_headers())
                 .header("access-control-max-age", "86400")
                 .header("vary", "Origin")
                 .body(Full::new(Bytes::new()).boxed())
@@ -161,7 +238,10 @@ async fn handle_http(
     // CORS enforcement: if Origin present and not loopback, reject
     if let Some(ref origin) = origin_hdr {
         if !is_allowed_http_origin(origin) {
-            return Ok(text_body(StatusCode::FORBIDDEN, "forbidden origin".to_string()));
+            return Ok(text_body(
+                StatusCode::FORBIDDEN,
+                "forbidden origin".to_string(),
+            ));
         }
     }
 
@@ -175,7 +255,10 @@ async fn handle_http(
             let guard = state.lock().await;
             guard.capabilities_value()
         };
-        return Ok(with_cors(json_body(StatusCode::OK, caps), origin_hdr.as_deref()));
+        return Ok(with_cors(
+            json_body(StatusCode::OK, caps),
+            origin_hdr.as_deref(),
+        ));
     }
 
     // GET /api/events -> SSE (live) or JSON replay (?since=CURSOR when persist)
@@ -208,7 +291,8 @@ async fn handle_http(
                     }
                 };
                 // Cap replay to prevent unbounded reads / DoS
-                let raw_limit: Option<u64> = query_param(&uri, "limit").and_then(|s| s.parse().ok());
+                let raw_limit: Option<u64> =
+                    query_param(&uri, "limit").and_then(|s| s.parse().ok());
                 let capped_limit: Option<u64> = Some(raw_limit.unwrap_or(500).min(1000));
                 let res = {
                     let guard = state.lock().await;
@@ -225,10 +309,16 @@ async fn handle_http(
                             .collect();
                         let latest = {
                             let guard = state.lock().await;
-                            guard.persist().and_then(|l| l.latest_cursor().ok()).unwrap_or(0)
+                            guard
+                                .persist()
+                                .and_then(|l| l.latest_cursor().ok())
+                                .unwrap_or(0)
                         };
                         return Ok(with_cors(
-                            json_body(StatusCode::OK, json!({"events": items, "latest_cursor": latest})),
+                            json_body(
+                                StatusCode::OK,
+                                json!({"events": items, "latest_cursor": latest}),
+                            ),
                             origin_hdr.as_deref(),
                         ));
                     }
@@ -256,7 +346,9 @@ async fn handle_http(
                         let json = serde_json::to_string(&n).unwrap_or_default();
                         let sse = format!("data: {}\n\n", json);
                         return Some((
-                            Ok::<Frame<Bytes>, std::convert::Infallible>(Frame::data(Bytes::from(sse))),
+                            Ok::<Frame<Bytes>, std::convert::Infallible>(Frame::data(Bytes::from(
+                                sse,
+                            ))),
                             rx,
                         ));
                     }
@@ -299,24 +391,32 @@ async fn handle_http(
                 origin_hdr.as_deref(),
             ));
         }
-        let body_bytes = match req.collect().await {
+        if content_length_exceeds(&req) {
+            return Ok(payload_too_large(origin_hdr.as_deref()));
+        }
+        // Limited enforces 1 MiB even with chunked / lying Content-Length
+        let (parts, body) = req.into_parts();
+        let limited = Limited::new(body, MAX_BODY_BYTES);
+        let body_bytes = match limited.collect().await {
             Ok(c) => c.to_bytes(),
             Err(e) => {
+                let msg = e.to_string();
+                // Limited returns LengthLimitError when exceeded
+                if msg.contains("length limit") || msg.contains("LengthLimit") {
+                    return Ok(payload_too_large(origin_hdr.as_deref()));
+                }
                 return Ok(with_cors(
-                    text_body(
-                        StatusCode::BAD_REQUEST,
-                        format!("failed to read body: {e}"),
-                    ),
+                    text_body(StatusCode::BAD_REQUEST, format!("failed to read body: {e}")),
                     origin_hdr.as_deref(),
                 ));
             }
         };
+        // Defensive: also check exact length (e.g. if Limited not triggered due to size_hint)
         if body_bytes.len() > MAX_BODY_BYTES {
-            return Ok(with_cors(
-                text_body(StatusCode::PAYLOAD_TOO_LARGE, "payload too large (max 1 MiB)".to_string()),
-                origin_hdr.as_deref(),
-            ));
+            return Ok(payload_too_large(origin_hdr.as_deref()));
         }
+        // parts not needed further; keep for symmetry / future use
+        let _ = parts;
         let msg: provider_core::SendMessage = match serde_json::from_slice(&body_bytes) {
             Ok(v) => v,
             Err(e) => {
@@ -336,7 +436,10 @@ async fn handle_http(
         match outcome {
             Ok(receipt) => {
                 let v = serde_json::to_value(&receipt).unwrap_or(Value::Null);
-                return Ok(with_cors(json_body(StatusCode::OK, v), origin_hdr.as_deref()));
+                return Ok(with_cors(
+                    json_body(StatusCode::OK, v),
+                    origin_hdr.as_deref(),
+                ));
             }
             Err(e) => {
                 let je = provider_error(e);
@@ -360,24 +463,28 @@ async fn handle_http(
 
     // POST /rpc (and /api/rpc, / for compat)
     if method == Method::POST && (path == "/rpc" || path == "/api/rpc" || path == "/") {
-        let body_bytes = match req.collect().await {
+        if content_length_exceeds(&req) {
+            return Ok(payload_too_large(origin_hdr.as_deref()));
+        }
+        let (parts, body) = req.into_parts();
+        let limited = Limited::new(body, MAX_BODY_BYTES);
+        let body_bytes = match limited.collect().await {
             Ok(c) => c.to_bytes(),
             Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("length limit") || msg.contains("LengthLimit") {
+                    return Ok(payload_too_large(origin_hdr.as_deref()));
+                }
                 return Ok(with_cors(
-                    text_body(
-                        StatusCode::BAD_REQUEST,
-                        format!("failed to read body: {e}"),
-                    ),
+                    text_body(StatusCode::BAD_REQUEST, format!("failed to read body: {e}")),
                     origin_hdr.as_deref(),
                 ));
             }
         };
         if body_bytes.len() > MAX_BODY_BYTES {
-            return Ok(with_cors(
-                text_body(StatusCode::PAYLOAD_TOO_LARGE, "payload too large (max 1 MiB)".to_string()),
-                origin_hdr.as_deref(),
-            ));
+            return Ok(payload_too_large(origin_hdr.as_deref()));
         }
+        let _ = parts;
         let body_str = String::from_utf8_lossy(&body_bytes).into_owned();
         let response = match parse_request(&body_str) {
             Ok(request) => match state.lock().await.handle_request(request).await {

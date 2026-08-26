@@ -1,11 +1,15 @@
 //! Newline-delimited JSON-RPC 2.0 over stdio (primary transport).
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+};
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::error::TransportError;
 use crate::jsonrpc::parse_request;
 use crate::state::{dropped_frames_notification, AppState, DispatchOutcome, Outbound};
+
+const MAX_LINE_BYTES: usize = 1 << 20; // 1 MiB — same as HTTP/ws limit
 
 /// Serve JSON-RPC 2.0 over `stdin`/`stdout`, one JSON document per line.
 ///
@@ -22,19 +26,83 @@ pub async fn serve_stdio(
     stdout: impl AsyncWrite + Unpin + Send + 'static,
 ) -> Result<(), TransportError> {
     let writer_task = tokio::spawn(write_loop(notify_tx.subscribe(), BufWriter::new(stdout)));
-    let mut reader = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
     let mut result: Result<(), TransportError> = Ok(());
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
     'read: loop {
-        let line = match reader.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break, // client closed stdin
+        buf.clear();
+        // Bounded read: cap at MAX_LINE_BYTES+1 to detect oversize without unbounded alloc
+        let n = match (&mut reader)
+            .take((MAX_LINE_BYTES + 1) as u64)
+            .read_until(b'\n', &mut buf)
+            .await
+        {
+            Ok(n) => n,
             Err(e) => {
                 result = Err(e.into());
                 break;
             }
         };
-        let line = line.trim();
+        if n == 0 {
+            break; // EOF
+        }
+        // Detect oversize: payload (without trailing newline) > MAX_LINE_BYTES.
+        // Take limit is MAX+1 so a valid MAX payload plus '\n' fits exactly.
+        let payload_len = if buf.ends_with(b"\n") {
+            // handle \r\n
+            if buf.len() >= 2 && buf[buf.len() - 2] == b'\r' {
+                buf.len() - 2
+            } else {
+                buf.len() - 1
+            }
+        } else {
+            buf.len()
+        };
+        let truncated = n as usize == MAX_LINE_BYTES + 1 && !buf.ends_with(b"\n");
+        let oversized = payload_len > MAX_LINE_BYTES || truncated;
+        if oversized {
+            // Discard remainder of this overlong line until newline/EOF to resync
+            if !buf.ends_with(b"\n") {
+                let mut discard = Vec::new();
+                loop {
+                    discard.clear();
+                    // Bounded discard: 8 KiB per iteration to avoid unbounded alloc
+                    match (&mut reader)
+                        .take(8192)
+                        .read_until(b'\n', &mut discard)
+                        .await
+                    {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if discard.ends_with(b"\n") {
+                                break;
+                            }
+                            if discard.is_empty() {
+                                break;
+                            }
+                            // No newline yet; continue discarding in bounded chunks
+                        }
+                        Err(e) => {
+                            result = Err(e.into());
+                            break 'read;
+                        }
+                    }
+                }
+            }
+            tracing::warn!(len = buf.len(), "stdio line exceeds 1 MiB, rejecting");
+            let err_resp = crate::jsonrpc::Response::err(
+                crate::jsonrpc::Id::Null,
+                crate::jsonrpc::JsonRpcError::INVALID_REQUEST,
+                "line too large (max 1 MiB)",
+                None,
+            );
+            let _ = state.notify().send(Outbound::Response(err_resp));
+            continue;
+        }
+        // Convert to string; buf is known to be <=1MiB+1 (payload <=1MiB)
+        let line_str = String::from_utf8_lossy(&buf);
+        let line = line_str.trim();
         if line.is_empty() {
             continue;
         }
