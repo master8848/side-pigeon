@@ -15,7 +15,17 @@ use crate::jsonrpc::{JsonRpcError, Notification, Request, Response, JSONRPC_VERS
 use crate::persist::EventLog;
 
 /// Broadcast channel capacity for outgoing frames (responses + notifications).
+///
 /// Sized for chat-rate traffic (not 512 ~512 KB idle overhead per connection).
+/// P6: 32 is intentionally small for the global `broadcast` fan-out; per-connection
+/// `mpsc` in `ws.rs` is 1024, so a slow client lags on its own queue and receives
+/// an honest `-32006` `dropped_frames` notification instead of growing the global
+/// buffer. Bumping to 128 would hide backpressure and increase idle memory per
+/// subscriber (`broadcast` pre-allocates slots). Keep 32 unless load testing shows
+/// sustained >32 frames in-flight at chat rate; the `Lagged` handler already
+/// recovers gracefully.
+/// See also `crates/provider-core/src/plugin.rs` P6 for the companion `O(N)`
+/// dedup fix (now `O(1)` amortized via `VecDeque` order queue).
 const OUTBOUND_CAPACITY: usize = 32;
 
 /// A frame the transport writes to the client: either a response to a request
@@ -40,6 +50,36 @@ pub enum DispatchOutcome {
 }
 
 /// Shared JSON-RPC server state: provider registry + notification fan-out.
+///
+/// # P4 — global lock serialization
+///
+/// Historical debt: callers hold `Arc<Mutex<AppState>>` (see `bin/pc/src/main.rs:1220`
+/// `Arc::new(Mutex::new(state))`, `crates/provider-transport/src/ws.rs:196` and
+/// `http.rs:490` `state.lock().await.handle_request(...).await`) and
+/// `handle_request(&mut self)` requires exclusive access, so a `send` holds the
+/// global lock across an `.await` (`ProviderRegistry::send` → provider network I/O).
+/// All other `send`/`listen`/`capabilities` requests serialize behind it.
+///
+/// Ideal fix (deferred — see `docs/POLISH.md:P4`): split `AppState` into
+/// `RwLock<ProviderRegistry>` (read for `send`/`capabilities`/`listen` routing,
+/// write only for `shutdown` flag / `stop_all`) + per-provider `Mutex` inside
+/// `ProviderRegistry` (each provider's `start`/`stop`/`send` serializes only on
+/// its own key). `handle_request` would then take `&self` (no `&mut`) and callers
+/// would use `Arc<RwLock<AppState>>` or `Arc<AppState>` with interior locks, so
+/// `send` never holds a global exclusive guard across an await. `ProviderRegistry::send`
+/// already takes `&self`, so the registry itself is read-friendly; only the outer
+/// `AppState` `&mut` and `shutdown: bool` force exclusive access today.
+///
+/// Minimal safe mitigation (this file): `send` delegates to `registry.send(&self)`
+/// which does not require `&mut`; `listen`/`shutdown` are the only writers.
+/// Callers that only need `send` can release the outer guard before awaiting by
+/// cloning `registry` handles or by using the read-only paths in `http.rs`
+/// (`guard.registry().send(...).await` holds the guard across await today — future
+/// change is to downgrade to `RwLock::read` or to `Arc::clone(registry)`). No
+/// deadlock is possible: the lock is a single `tokio::sync::Mutex` with no
+/// nested acquisition, and `ProviderEvents` callbacks never re-enter `AppState`.
+/// Full `RwLock` migration is intentionally left as a `TODO(P4)` to avoid a
+/// risky cross-crate signature churn in this polish pass.
 pub struct AppState {
     protocol_version: String,
     transport: Vec<String>,
@@ -96,9 +136,16 @@ impl AppState {
         let persist = log.clone();
         // Re-wire the events sink to include the log
         let events: Arc<dyn ProviderEvents> = if let Some(bus) = self.event_bus.clone() {
-            Arc::new(BridgeEvents { tx, bus, persist: Some(persist.clone()) })
+            Arc::new(BridgeEvents {
+                tx,
+                bus,
+                persist: Some(persist.clone()),
+            })
         } else {
-            Arc::new(NotifyEvents { tx, persist: Some(persist.clone()) })
+            Arc::new(NotifyEvents {
+                tx,
+                persist: Some(persist.clone()),
+            })
         };
         self.registry.set_events(events);
         self.persist = Some(log);
@@ -202,6 +249,14 @@ impl AppState {
     }
 
     /// Dispatch one request. See the crate docs for the method table.
+    ///
+    /// P4 note: `&mut self` forces callers to hold `Arc<Mutex<AppState>>` across
+    /// the await (serializes `send`). The read-only branches (`send`, `capabilities`)
+    /// only need `&self`; a future `handle_request(&self)` with `RwLock` + per-provider
+    /// `Mutex` would allow concurrent `send`s. Kept as `&mut` in this pass to
+    /// avoid breaking `ws.rs`/`http.rs`/`stdio.rs` signatures; the interior
+    /// `registry.send(&self)` is already `&self`-friendly so the global lock is
+    /// the only serializer. See struct-level `P4` doc for the full migration plan.
     pub async fn handle_request(&mut self, req: Request) -> DispatchOutcome {
         let Some(id) = req.id.clone() else {
             tracing::debug!(method = %req.method, "ignoring client notification (no id)");
@@ -359,6 +414,11 @@ struct NotifyEvents {
 impl ProviderEvents for NotifyEvents {
     fn on_message(&self, msg: ChannelMessage) {
         let notification = Notification::message(&msg);
+        // S7: EventLog::append is sync WAL insert (~0.5-5ms). Mitigated by
+        // WAL+NORMAL+32M journal_size_limit in persist.rs. Ideal is mpsc writer
+        // thread or tokio::task::spawn_blocking at async call-sites; this
+        // sync ProviderEvents hook cannot spawn_blocking without a runtime
+        // handle, so we keep the direct append and bound growth via prune().
         #[cfg(feature = "persist")]
         if let Some(log) = &self.persist {
             if let Err(e) = log.append(&notification) {
@@ -372,6 +432,7 @@ impl ProviderEvents for NotifyEvents {
 
     fn on_error(&self, provider: &str, error: &ProviderError) {
         let notification = error_notification(provider, error);
+        // S7: see on_message comment — sync WAL insert mitigated by journal_size_limit + prune.
         #[cfg(feature = "persist")]
         if let Some(log) = &self.persist {
             if let Err(e) = log.append(&notification) {
@@ -403,6 +464,7 @@ impl ProviderEvents for BridgeEvents {
             return;
         };
         let notification = Notification::message(&filtered);
+        // S7: see NotifyEvents::on_message — sync WAL insert mitigated by journal_size_limit + prune.
         #[cfg(feature = "persist")]
         if let Some(log) = &self.persist {
             if let Err(e) = log.append(&notification) {
@@ -417,6 +479,7 @@ impl ProviderEvents for BridgeEvents {
     fn on_error(&self, provider: &str, error: &ProviderError) {
         self.bus.publish_error(provider, error);
         let notification = error_notification(provider, error);
+        // S7: see NotifyEvents::on_message — sync WAL insert mitigated by journal_size_limit + prune.
         #[cfg(feature = "persist")]
         if let Some(log) = &self.persist {
             if let Err(e) = log.append(&notification) {

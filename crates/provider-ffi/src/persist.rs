@@ -8,8 +8,8 @@
 pub mod sqlite_log {
     use std::path::Path;
 
-    use provider_transport::persist::EventLog as TransportLog;
     use provider_transport::jsonrpc::Notification;
+    use provider_transport::persist::EventLog as TransportLog;
     use serde_json::Value;
 
     /// Thin wrapper over `provider_transport::persist::EventLog` that exposes
@@ -41,7 +41,8 @@ pub mod sqlite_log {
             let v: Value = serde_json::from_str(json).map_err(|e| format!("invalid json: {e}"))?;
             // If already a Notification-shaped object, use it directly.
             let notif = if v.get("jsonrpc").is_some() && v.get("method").is_some() {
-                let n: Notification = serde_json::from_value(v).map_err(|e| format!("invalid notification: {e}"))?;
+                let n: Notification =
+                    serde_json::from_value(v).map_err(|e| format!("invalid notification: {e}"))?;
                 n
             } else {
                 // Wrap raw ChannelMessage / arbitrary value as event.message
@@ -61,8 +62,10 @@ pub mod sqlite_log {
         }
 
         /// Replay with an optional row limit.
+        /// S8: caps to 1000 even when None (defense-in-depth; inner also caps).
         pub fn replay_since_limit(&self, cursor: u64, limit: Option<u64>) -> Vec<String> {
-            match self.inner.replay_since(cursor, limit) {
+            let capped = Some(limit.unwrap_or(1000).clamp(1, 1000));
+            match self.inner.replay_since(cursor, capped) {
                 Ok(rows) => rows.into_iter().map(|(_, v)| v.to_string()).collect(),
                 Err(e) => {
                     tracing::warn!("SqliteLog replay_since failed: {e}");
@@ -71,9 +74,14 @@ pub mod sqlite_log {
             }
         }
 
-        /// Typed replay returning cursors + values.
-        pub fn replay_since_typed(&self, since: u64, limit: Option<u64>) -> Result<Vec<(u64, Value)>, String> {
-            self.inner.replay_since(since, limit)
+        /// Typed replay returning cursors + values. Caps limit to 1000 (S8).
+        pub fn replay_since_typed(
+            &self,
+            since: u64,
+            limit: Option<u64>,
+        ) -> Result<Vec<(u64, Value)>, String> {
+            let capped = Some(limit.unwrap_or(1000).clamp(1, 1000));
+            self.inner.replay_since(since, capped)
         }
 
         /// Latest cursor (0 if empty).
