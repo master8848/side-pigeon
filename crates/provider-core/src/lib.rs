@@ -36,6 +36,8 @@ pub mod traits;
 #[cfg(feature = "registry")]
 pub mod registry;
 
+pub mod alias;
+
 pub mod plugin;
 
 #[cfg(feature = "registry")]
@@ -49,6 +51,6 @@ pub use schema::{
 pub use traits::{ChatProvider, ProviderEvents, TRANSIENT_ERROR_EVENT_THRESHOLD};
 
 #[cfg(feature = "registry")]
-pub use registry::ProviderRegistry;
-#[cfg(feature = "registry")]
 pub use client::{EventBus, EventFilter, ProviderClient, ProviderClientBuilder, Subscription};
+#[cfg(feature = "registry")]
+pub use registry::ProviderRegistry;

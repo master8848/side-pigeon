@@ -393,20 +393,24 @@ async fn check_one(
     caps: &serde_json::Value,
     notify_tx: &broadcast::Sender<Outbound>,
 ) -> SmokeOutcome {
+    let kind = provider_core::alias::provider_kind(id, config_value);
+    let alias_static = provider_core::alias::leak_alias(id);
+    let alias_events = provider_core::alias::AliasEvents::wrap(alias_static, events.clone());
     tracing::info!(
         protocol = %caps["protocolVersion"],
         provider = %id,
+        kind = %kind,
         "check: initialize + capabilities ok"
     );
-    match id {
+    match kind {
         #[cfg(feature = "demo")]
-        "demo" => check_demo(config_value, events, notify_tx).await,
+        "demo" => check_demo(config_value, &alias_events, notify_tx).await,
         #[cfg(feature = "telegram")]
-        "telegram" => check_telegram(config_value, events).await,
+        "telegram" => check_telegram(config_value, &alias_events).await,
         #[cfg(feature = "discord")]
-        "discord" => check_discord(config_value, events).await,
+        "discord" => check_discord(config_value, &alias_events).await,
         other => SmokeOutcome::Fail(CliError::protocol(format!(
-            "unknown provider '{other}' (compiled in: {})",
+            "unknown provider kind '{other}' for alias '{id}' (compiled in: {})",
             providers::available_providers().join(", ")
         ))),
     }

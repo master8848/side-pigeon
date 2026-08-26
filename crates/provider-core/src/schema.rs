@@ -91,7 +91,7 @@ pub mod base64_bytes {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
     const MAX_DECODED_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
-    // Base64 expands by 4/3; allow small padding overhead.
+                                                      // Base64 expands by 4/3; allow small padding overhead.
     const MAX_ENCODED_LEN: usize = MAX_DECODED_BYTES * 4 / 3 + 4;
 
     /// Serialize bytes as a base64 string (`null` when absent).

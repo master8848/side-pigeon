@@ -1,5 +1,8 @@
 //! Sidecar configuration: JSON file or environment variables.
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
 use std::env;
 use std::fs;
 
@@ -75,9 +78,11 @@ fn from_env() -> Result<SidecarConfig, ConfigError> {
             if !extra.trim().is_empty() {
                 let extra: Value = serde_json::from_str(&extra)?;
                 if !extra.is_object() {
-                    return Err(ConfigError::Json(<serde_json::Error as serde::de::Error>::custom(
-                        format!("PC_{upper}_CONFIG must be a JSON object, got {extra}"),
-                    )));
+                    return Err(ConfigError::Json(
+                        <serde_json::Error as serde::de::Error>::custom(format!(
+                            "PC_{upper}_CONFIG must be a JSON object, got {extra}"
+                        )),
+                    ));
                 }
                 merge_into(&mut config, extra);
             }
@@ -133,8 +138,18 @@ mod tests {
     fn env_merging_token_and_extra_config() {
         let _guard = env_lock().lock().unwrap();
         // Save and restore env to avoid polluting other tests/process
-        let vars = ["PC_PROVIDERS", "PC_TELEGRAM_TOKEN", "PC_TELEGRAM_CONFIG", "PC_CONFIG", "PC_DEMO_CONFIG", "PC_DEMO_TOKEN"];
-        let saved: Vec<(String, Option<String>)> = vars.iter().map(|k| (k.to_string(), env::var(k).ok())).collect();
+        let vars = [
+            "PC_PROVIDERS",
+            "PC_TELEGRAM_TOKEN",
+            "PC_TELEGRAM_CONFIG",
+            "PC_CONFIG",
+            "PC_DEMO_CONFIG",
+            "PC_DEMO_TOKEN",
+        ];
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|k| (k.to_string(), env::var(k).ok()))
+            .collect();
 
         // Clean slate
         for k in &vars {
@@ -143,7 +158,10 @@ mod tests {
 
         env::set_var("PC_PROVIDERS", "demo,telegram");
         env::set_var("PC_TELEGRAM_TOKEN", "123:abc");
-        env::set_var("PC_TELEGRAM_CONFIG", r#"{"base_url":"https://example.test","poll_interval_secs":7}"#);
+        env::set_var(
+            "PC_TELEGRAM_CONFIG",
+            r#"{"base_url":"https://example.test","poll_interval_secs":7}"#,
+        );
         env::remove_var("PC_CONFIG");
 
         let cfg = load(None).expect("load from env");
@@ -166,8 +184,16 @@ mod tests {
     #[test]
     fn env_extra_config_merges_and_overrides_token() {
         let _guard = env_lock().lock().unwrap();
-        let vars = ["PC_PROVIDERS", "PC_TELEGRAM_TOKEN", "PC_TELEGRAM_CONFIG", "PC_CONFIG"];
-        let saved: Vec<(String, Option<String>)> = vars.iter().map(|k| (k.to_string(), env::var(k).ok())).collect();
+        let vars = [
+            "PC_PROVIDERS",
+            "PC_TELEGRAM_TOKEN",
+            "PC_TELEGRAM_CONFIG",
+            "PC_CONFIG",
+        ];
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|k| (k.to_string(), env::var(k).ok()))
+            .collect();
         for k in &vars {
             env::remove_var(k);
         }
@@ -175,7 +201,10 @@ mod tests {
         env::set_var("PC_PROVIDERS", "telegram");
         env::set_var("PC_TELEGRAM_TOKEN", "old-token");
         // PC_TELEGRAM_CONFIG wins per key over the token env
-        env::set_var("PC_TELEGRAM_CONFIG", r#"{"token":"new-token","base_url":"https://override.test"}"#);
+        env::set_var(
+            "PC_TELEGRAM_CONFIG",
+            r#"{"token":"new-token","base_url":"https://override.test"}"#,
+        );
         env::remove_var("PC_CONFIG");
 
         let cfg = load(None).expect("load");
@@ -194,7 +223,10 @@ mod tests {
     fn invalid_object_error_fails_closed() {
         let _guard = env_lock().lock().unwrap();
         let vars = ["PC_PROVIDERS", "PC_FOO_CONFIG", "PC_CONFIG", "PC_FOO_TOKEN"];
-        let saved: Vec<(String, Option<String>)> = vars.iter().map(|k| (k.to_string(), env::var(k).ok())).collect();
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|k| (k.to_string(), env::var(k).ok()))
+            .collect();
         for k in &vars {
             env::remove_var(k);
         }
@@ -205,8 +237,14 @@ mod tests {
         env::remove_var("PC_CONFIG");
         let err = load(None).expect_err("non-object PC_FOO_CONFIG must fail");
         let msg = err.to_string();
-        assert!(msg.contains("PC_FOO_CONFIG"), "error should mention env var, got: {msg}");
-        assert!(msg.contains("JSON object"), "error should mention JSON object, got: {msg}");
+        assert!(
+            msg.contains("PC_FOO_CONFIG"),
+            "error should mention env var, got: {msg}"
+        );
+        assert!(
+            msg.contains("JSON object"),
+            "error should mention JSON object, got: {msg}"
+        );
 
         // Non-object JSON string
         env::set_var("PC_FOO_CONFIG", "\"hello\"");
@@ -239,8 +277,16 @@ mod tests {
     #[test]
     fn empty_extra_config_is_ignored() {
         let _guard = env_lock().lock().unwrap();
-        let vars = ["PC_PROVIDERS", "PC_DEMO_CONFIG", "PC_CONFIG", "PC_DEMO_TOKEN"];
-        let saved: Vec<(String, Option<String>)> = vars.iter().map(|k| (k.to_string(), env::var(k).ok())).collect();
+        let vars = [
+            "PC_PROVIDERS",
+            "PC_DEMO_CONFIG",
+            "PC_CONFIG",
+            "PC_DEMO_TOKEN",
+        ];
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|k| (k.to_string(), env::var(k).ok()))
+            .collect();
         for k in &vars {
             env::remove_var(k);
         }

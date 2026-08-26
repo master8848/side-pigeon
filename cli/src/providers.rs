@@ -18,20 +18,39 @@ use provider_core::{ChatProvider, ProviderEvents};
 /// The full merged config blob (`PC_*_CONFIG` / JSON file) is applied — not
 /// just `token` — so `base_url`, `poll_interval`, `intents` and timeouts
 /// actually reach the providers.
+// TODO(P2): extract to provider-config::factory - see docs/POLISH.md P2
 pub fn build_provider(
     id: &str,
     config: &serde_json::Value,
     events: Arc<dyn ProviderEvents>,
 ) -> Result<Box<dyn ChatProvider>, String> {
-    match id {
+    let kind = provider_core::alias::provider_kind(id, config);
+    let alias_static = provider_core::alias::leak_alias(id);
+    let events = provider_core::alias::AliasEvents::wrap(alias_static, events);
+    match kind {
         #[cfg(feature = "demo")]
-        "demo" => Ok(Box::new(crate::demo::DemoProvider::new(events, config))),
+        "demo" => Ok(Box::new(provider_core::alias::AliasedProvider::new(
+            alias_static,
+            Box::new(crate::demo::DemoProvider::new(events, config)),
+        ))),
         #[cfg(feature = "telegram")]
-        "telegram" => Ok(Box::new(build_telegram(config, events)?)),
+        "telegram" => {
+            let p = build_telegram(config, events)?;
+            Ok(Box::new(provider_core::alias::AliasedProvider::new(
+                alias_static,
+                Box::new(p),
+            )))
+        }
         #[cfg(feature = "discord")]
-        "discord" => Ok(Box::new(build_discord(config, events)?)),
+        "discord" => {
+            let p = build_discord(config, events)?;
+            Ok(Box::new(provider_core::alias::AliasedProvider::new(
+                alias_static,
+                Box::new(p),
+            )))
+        }
         other => Err(format!(
-            "unknown provider '{other}' (compiled in: {})",
+            "unknown provider kind '{other}' for alias '{id}' (compiled in: {})",
             available_providers().join(", ")
         )),
     }
@@ -46,7 +65,7 @@ pub fn build_telegram(
 ) -> Result<provider_telegram::TelegramProvider, String> {
     let token = config_token("telegram", config)?;
     let mut provider = provider_telegram::TelegramProvider::new(token, events);
-    if let Some(base) = config_str("telegram", config, "base_url")? {
+    if let Some(base) = config_str_alt("telegram", config, &["base_url", "baseUrl"])? {
         provider = provider.with_base_url(base);
     }
     if let Some(secs) = config_u64("telegram", config, "poll_interval_secs")? {
@@ -70,10 +89,10 @@ pub fn build_discord(
 ) -> Result<provider_discord::DiscordProvider, String> {
     let token = config_token("discord", config)?;
     let mut provider = provider_discord::DiscordProvider::new(token, events);
-    if let Some(url) = config_str("discord", config, "gateway_url")? {
+    if let Some(url) = config_str_alt("discord", config, &["gateway_url", "gatewayUrl"])? {
         provider = provider.with_gateway_url(url);
     }
-    if let Some(base) = config_str("discord", config, "rest_base")? {
+    if let Some(base) = config_str_alt("discord", config, &["rest_base", "restBase"])? {
         provider = provider.with_rest_base(base);
     }
     if let Some(intents) = config_u64("discord", config, "intents")? {
@@ -95,6 +114,7 @@ fn config_token(id: &str, config: &serde_json::Value) -> Result<String, String> 
 }
 
 #[cfg(any(feature = "telegram", feature = "discord"))]
+#[allow(dead_code)]
 fn config_str(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
     match config.get(key) {
         None => Ok(None),
@@ -103,6 +123,26 @@ fn config_str(id: &str, config: &serde_json::Value, key: &str) -> Result<Option<
             .map(|s| Some(s.to_string()))
             .ok_or_else(|| format!("provider '{id}' config.{key} must be a string")),
     }
+}
+
+#[cfg(any(feature = "telegram", feature = "discord"))]
+fn config_str_alt(
+    id: &str,
+    config: &serde_json::Value,
+    keys: &[&str],
+) -> Result<Option<String>, String> {
+    for key in keys {
+        match config.get(*key) {
+            None => continue,
+            Some(v) => {
+                return v
+                    .as_str()
+                    .map(|s| Some(s.to_string()))
+                    .ok_or_else(|| format!("provider '{id}' config.{key} must be a string"));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(any(feature = "telegram", feature = "discord"))]
