@@ -1,13 +1,25 @@
 # side-pigeon
 
-> **side-pigeon** — Rust sidecar + headless JS that connects any Node/Bun app or AI agent to messaging providers (Telegram, Discord, Slack, ...) over a clean JSON-RPC 2.0 API.
+> **side-pigeon** — single Rust binary `pc` that holds Telegram/Discord connections lean (~12-28 MB idle), wakes your agent only on message.
 
-- **Rust sidecar** (`pc` binary) owns the provider connections (Telegram long-poll, Discord Gateway WS, ...). Idle RSS target **< 30–50 MB** (fixes the ~400 MB idle-RAM trap of JS SDKs).
-- **Headless TS** (`@mbsks/side-pigeon`) spawns that sidecar over **stdio NDJSON**, speaks `initialize → listen → send → shutdown` (`event.message`/`event.error`).
-- **Transports**: stdio (default, lean), WebSocket and HTTP (`pc serve`).
-- **Plugins**: TypeScript extensions for **Opencode** and **Pi** that reuse the same sidecar.
+- **Rust sidecar** (`pc` binary) owns the provider connections (Telegram long-poll `crates/provider-telegram/src/lib.rs`, Discord Gateway WS `crates/provider-discord/src/gateway.rs`). Fixes the ~400 MB idle-RAM trap of JS SDKs `docs/architecture.md:5`.
+- **Transports**: `stdio` NDJSON `crates/provider-transport/src/stdio.rs:18` (default, lean), `WebSocket`+`HTTP` `pc serve` `crates/provider-transport/src/http.rs:11` — any language via `POST /api/providers/:id/send` + `GET /api/events` SSE.
+- **Headless TS** (`@mbsks/side-pigeon`) spawns sidecar over stdio, `initialize→listen→send→shutdown` (`event.message`/`event.error` `crates/provider-transport/src/jsonrpc.rs:194`).
+- **Plugins**: `Opencode`/`Pi` reuse the same sidecar `plugins/`.
 
-Prerelease `0.1.0` — see [`docs/architecture.md`](docs/architecture.md).
+Prerelease `0.1.0`.
+
+## What can you do — start here
+
+| Need | How | Doc |
+|---|---|---|
+| Send/receive from any app (Node/Bun/Python/Go/Dart) | `pc serve --http 127.0.0.1:8788` + `fetch`/`curl` | [docs/app-integration.md](docs/app-integration.md), [docs/guides/polyglot.md](docs/guides/polyglot.md) |
+| Two bots same platform (tg-main + tg-ops) | `pc.config.json` alias `id` + `config.kind` | [docs/guides/multi-bot-routing.md](docs/guides/multi-bot-routing.md) |
+| Wake any script on message (no Rust) | `curl -N /api/events` SSE -> `Popen hermes` | [docs/guides/spawn-script.md](docs/guides/spawn-script.md) |
+| Hermes 0 MB idle, spin on message, kill after 5m | `pc serve` stays, watcher spawns, `--idle-kill 300` | [docs/guides/hermes-on-demand.md](docs/guides/hermes-on-demand.md), [docs/guides/idle-autokill.md](docs/guides/idle-autokill.md) |
+| Human-like 2m delay, coalesce 3 msgs, `/now` instant | `DebouncePlugin delay 120s` | [docs/guides/human-delay.md](docs/guides/human-delay.md) |
+| Config JSON / JSONC / TOML / Lua | `pc.config.{json,jsonc,toml,lua}` + `PC_*` env | [docs/guides/config-formats.md](docs/guides/config-formats.md) |
+| Repair/docs & security/quality | Features vs fixes vs polish split | [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/POLISH.md](docs/POLISH.md) |
 
 ## Install
 
@@ -150,14 +162,16 @@ cargo test
 ## Limitations
 
 - WhatsApp / Slack / Signal / Matrix not yet implemented (planned: hand-rolled on `reqwest` + `tokio-tungstenite`).
-- `pc.config.ts` `defineConfig` is a type stub; Rust loader reads JSON.
-- SQLite replay is daemon-only (`pc serve`). Stdio sidecar stays in-memory.
+- `pc.config.ts` `defineConfig` is a type stub; Rust loader reads JSON `crates/provider-config/src/lib.rs:53` — see [docs/guides/config-formats.md](docs/guides/config-formats.md) for TOML/JSONC/Lua.
+- SQLite replay is daemon-only (`pc serve`). Stdio sidecar stays in-memory `crates/provider-transport/src/persist.rs:25`.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) · [docs/api-contract.md](docs/api-contract.md) · [docs/supply-chain.md](docs/supply-chain.md) · [docs/phases/README.md](docs/phases/README.md).
+See [docs/architecture.md](docs/architecture.md) · [docs/api-contract.md](docs/api-contract.md) · [docs/persistence.md](docs/persistence.md) · [docs/supply-chain.md](docs/supply-chain.md) · [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md) · [docs/SECURITY.md](docs/SECURITY.md) · [docs/POLISH.md](docs/POLISH.md) · [docs/phases/README.md](docs/phases/README.md).
 
 For regular web apps/CLIs without an AI agent, see [docs/app-integration.md](docs/app-integration.md).
+
+Guides: [hermes-on-demand](docs/guides/hermes-on-demand.md) · [multi-bot](docs/guides/multi-bot-routing.md) · [spawn-script](docs/guides/spawn-script.md) · [human-delay](docs/guides/human-delay.md) · [idle-autokill](docs/guides/idle-autokill.md) · [polyglot](docs/guides/polyglot.md) · [config-formats](docs/guides/config-formats.md).
 
 Release profile is `LTO thin`, `panic=abort`, `strip` at `Cargo.toml:39` for binary size.
 
