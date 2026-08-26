@@ -146,12 +146,9 @@ impl ProviderRegistry {
             return Ok(self.started_ids());
         }
 
+        type StartResult = (Box<dyn ChatProvider>, String, Result<(), ProviderError>);
         // SAFETY: `registry` feature implies `tokio` dep is present (see Cargo.toml).
-        let mut set: tokio::task::JoinSet<(
-            Box<dyn ChatProvider>,
-            String,
-            Result<(), ProviderError>,
-        )> = tokio::task::JoinSet::new();
+        let mut set: tokio::task::JoinSet<StartResult> = tokio::task::JoinSet::new();
         for mut provider in to_start {
             let id_clone = provider.id().to_string();
             set.spawn(async move {

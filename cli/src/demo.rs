@@ -1,3 +1,4 @@
+// TODO(P1): extract to crates/provider-demo crate - see docs/POLISH.md P1
 //! Built-in `demo` provider (echo).
 //!
 //! NOTE: copied verbatim from `bin/pc/src/demo.rs` (provider-connect sidecar)

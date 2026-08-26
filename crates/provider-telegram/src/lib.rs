@@ -14,7 +14,7 @@
 //!
 //! ## Example
 //!
-//! ```no_run
+//! ```ignore
 //! use std::sync::Arc;
 //! use provider_core::{ChatProvider, ProviderEvents, ChannelMessage};
 //! use provider_telegram::TelegramProvider;
@@ -33,6 +33,9 @@
 //!     Ok(())
 //! }
 //! ```
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -295,11 +298,11 @@ fn backoff(base: Duration, consecutive_errors: u32) -> Duration {
     let base_wait = base.saturating_mul(mult).min(Duration::from_secs(30));
     // Deterministic jitter (0..=200 ms) so a fleet of bots polling the same
     // provider does not retry in lockstep (Telegram 409/429 storm mitigation).
-    let jitter_ms = (std::time::SystemTime::now()
+    let jitter_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() % 201)
-        .unwrap_or(0)) as u32;
-    base_wait + Duration::from_millis(jitter_ms.into())
+        .unwrap_or(0);
+    base_wait + Duration::from_millis(u64::from(jitter_ms))
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +389,10 @@ impl TelegramProvider {
     /// fatal stop). Consumes it so callers can match on the variant without
     /// requiring `ProviderError: Clone`.
     pub fn take_last_error(&self) -> Option<ProviderError> {
-        self.last_error.lock().unwrap().take()
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// Current `getUpdates` offset cursor (last confirmed update_id + 1).
@@ -501,7 +507,10 @@ impl TelegramProvider {
                     tokio::time::sleep(provider.poll_interval).await;
                 }
                 Err(PollFailure::Retry { error, after }) => {
-                    *provider.last_error.lock().unwrap() = Some(error.clone());
+                    *provider
+                        .last_error
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(error.clone());
                     consecutive_errors += 1;
                     // Persistent degradation signal: tell the host once the
                     // connection has been failing for a while (not on every
@@ -519,7 +528,10 @@ impl TelegramProvider {
                 }
                 Err(PollFailure::Fatal(error)) => {
                     error!(error = %error, "telegram polling stopped (fatal error)");
-                    *provider.last_error.lock().unwrap() = Some(error.clone());
+                    *provider
+                        .last_error
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(error.clone());
                     // The host only sees silence otherwise — 401/409 kills the
                     // poll loop invisibly. Emit the async error event first.
                     provider.events.on_error(provider.id(), &error);

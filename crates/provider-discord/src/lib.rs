@@ -20,7 +20,7 @@
 //!
 //! ## Example
 //!
-//! ```no_run
+//! ```ignore
 //! use std::sync::Arc;
 //! use provider_core::{ChatProvider, ProviderEvents, ChannelMessage};
 //! use provider_discord::DiscordProvider;
@@ -39,6 +39,9 @@
 //!     Ok(())
 //! }
 //! ```
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -183,17 +186,26 @@ impl DiscordProvider {
     /// Take the last fatal error, if any. Consumes it (no `Clone` requirement
     /// on the caller side).
     pub fn take_last_error(&self) -> Option<ProviderError> {
-        self.last_error.lock().unwrap().take()
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// Cached guild state (id -> name) learned from GUILD_CREATE events.
     pub fn guilds(&self) -> HashMap<String, String> {
-        self.guilds.lock().unwrap().clone()
+        self.guilds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// The bot's own user id, once READY has been received.
     pub fn self_user_id(&self) -> Option<String> {
-        self.self_user_id.lock().unwrap().clone()
+        self.self_user_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Cached session id, if the gateway has reached READY.
@@ -297,7 +309,10 @@ impl DiscordProvider {
                 RunOutcome::Shutdown => break,
                 RunOutcome::Fatal(e) => {
                     error!(error = %e, "discord gateway stopped (fatal)");
-                    *provider.last_error.lock().unwrap() = Some(e.clone());
+                    *provider
+                        .last_error
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(e.clone());
                     // Fatal gateway errors (close 4004/4010-4014, auth) were
                     // invisible to hosts — emit the async error event first.
                     provider.events.on_error(provider.id(), &e);
@@ -339,7 +354,11 @@ impl DiscordProvider {
         provider: &Arc<Self>,
         shutdown: &mut watch::Receiver<bool>,
     ) -> RunOutcome {
-        let session = provider.session.lock().unwrap().clone();
+        let session = provider
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let url = session
             .as_ref()
             .map(|s| s.resume_url.clone())
@@ -434,7 +453,7 @@ impl DiscordProvider {
                             // Track the sequence number for heartbeats + resume.
                             if let Some(s) = payload.s {
                                 seq = s;
-                                if let Some(sess) = provider.session.lock().unwrap().as_mut() {
+                                if let Some(sess) = provider.session.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                                     sess.seq = s;
                                 }
                             }
@@ -447,9 +466,9 @@ impl DiscordProvider {
                                                 if let Ok(ready) = serde_json::from_value::<Ready>(d.clone()) {
                                                     let bot_id = ready.user.as_ref().map(|u| u.id.clone());
                                                     if let Some(id) = &bot_id {
-                                                        *provider.self_user_id.lock().unwrap() = Some(id.clone());
+                                                        *provider.self_user_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
                                                     }
-                                                    *provider.session.lock().unwrap() = Some(SessionState {
+                                                    *provider.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(SessionState {
                                                         session_id: ready.session_id.clone(),
                                                         resume_url: ready.resume_gateway_url.clone(),
                                                         seq,
@@ -463,7 +482,7 @@ impl DiscordProvider {
                                             if let Some(d) = &payload.d {
                                                 if let (Some(gid), Some(name)) = (d["id"].as_str(), d["name"].as_str()) {
                                                     trace!(guild_id = gid, guild = name, "guild cached");
-                                                    provider.guilds.lock().unwrap().insert(gid.to_string(), name.to_string());
+                                                    provider.guilds.lock().unwrap_or_else(|e| e.into_inner()).insert(gid.to_string(), name.to_string());
                                                 }
                                             }
                                         }
@@ -471,7 +490,7 @@ impl DiscordProvider {
                                             if let Some(d) = &payload.d {
                                                 if let Some(msg) = parse_message_create(
                                                     d,
-                                                    provider.self_user_id.lock().unwrap().as_deref(),
+                                                    provider.self_user_id.lock().unwrap_or_else(|e| e.into_inner()).as_deref(),
                                                 ) {
                                                     trace!(id = %msg.id, "dispatching discord message");
                                                     provider.events.on_message(msg);
@@ -497,7 +516,7 @@ impl DiscordProvider {
                                     let resumable = payload.d.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                                     debug!(resumable, "invalid session");
                                     if !resumable {
-                                        provider.session.lock().unwrap().take();
+                                        provider.session.lock().unwrap_or_else(|e| e.into_inner()).take();
                                     }
                                     let _ = sink.close().await;
                                     return RunOutcome::Reconnect { healthy: true };

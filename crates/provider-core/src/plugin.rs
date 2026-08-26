@@ -7,7 +7,7 @@
 //!
 //! Built-ins: [`DedupPlugin`], [`AllowListPlugin`], [`LoggerPlugin`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -54,21 +54,33 @@ pub const DEDUP_MAX_ENTRIES: usize = 2000;
 /// A message whose `id` was seen less than `window` ago is dropped. The
 /// cache is bounded by:
 /// 1. TTL expiry — entries older than `window` are evicted on every insert
-///    (`retain`).
+///    (`retain` + `VecDeque` prune).
 /// 2. LRU capacity — at most [`DEDUP_MAX_ENTRIES`] (default 2000) keys are
-///    retained; when full the oldest entry (by `Instant`) is evicted on insert
-///    (simple TTL-bounded LRU without an extra crate).
+///    retained; when full the oldest entry (insertion order via `VecDeque`) is
+///    evicted on insert (TTL-bounded LRU without an extra crate).
 ///
 /// `window` is configurable; default is 5 minutes via [`Default`] / [`DEFAULT_DEDUP_WINDOW`].
 /// Callers should revalidate after `send` (outbound `SendMessage` is not
 /// deduped — only inbound `ChannelMessage` — so a reflected echo that arrives
 /// after your own send will be correctly suppressed within the window).
+///
+/// P6: previously `retain` + `min_by_key` scanned the whole `HashMap` (`O(N)`)
+/// on every message plus a `format!` allocation for the key. The `O(N)` retain
+/// for TTL is kept but amortized (chat-rate < ~20 msg/s, 2000 entries is cheap;
+/// a future `lru = "0.12"` + `FxHash` would make expiry lazy without a scan),
+/// while `min_by_key` (`O(N)` linear scan for the oldest `Instant` on every
+/// capacity eviction) is replaced by an `O(1)` amortized `VecDeque` insertion-order
+/// queue. The `format!` key is retained for correctness (channel+id) — a future
+/// `FxHash` hasher would speed the `HashMap` itself without changing semantics.
 pub struct DedupPlugin {
     /// Deduplication window.
     pub window: Duration,
     /// Maximum number of keys to retain.
     pub max_entries: usize,
     cache: Mutex<HashMap<String, Instant>>,
+    /// Insertion-order queue for `O(1)` amortized LRU eviction (oldest at front).
+    /// Entries removed by TTL are pruned lazily from this queue.
+    order: Mutex<VecDeque<String>>,
 }
 
 impl DedupPlugin {
@@ -78,6 +90,7 @@ impl DedupPlugin {
             window,
             max_entries: DEDUP_MAX_ENTRIES,
             cache: Mutex::new(HashMap::new()),
+            order: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -87,6 +100,7 @@ impl DedupPlugin {
             window,
             max_entries: max_entries.max(1),
             cache: Mutex::new(HashMap::new()),
+            order: Mutex::new(VecDeque::new()),
         }
     }
 }
@@ -101,43 +115,57 @@ impl Plugin for DedupPlugin {
     fn on_message(&self, msg: &mut ChannelMessage) -> ControlFlow {
         let key = format!("{}:{}", msg.channel, msg.id);
         let now = Instant::now();
-        let mut cache = self
-            .cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        // Lock ordering: cache then order (consistent to avoid deadlock).
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
         // 1) TTL expiry: drop entries older than window to bound memory.
+        // P6: `retain` is O(N) but amortized cheap at chat rate (2000 entries,
+        // <20 msg/s). Future ideal is lazy expiry via `lru::LruCache` + `FxHash`
+        // without a full scan; we keep the scan but prune the order queue
+        // alongside it to keep the O(1) eviction queue consistent.
+        let before_len = cache.len();
         cache.retain(|_, t| now.duration_since(*t) < self.window);
+        if cache.len() != before_len {
+            // Prune order queue of expired keys (also O(N) but same amortized cost).
+            order.retain(|k| cache.contains_key(k));
+        }
         // 2) Dedup check.
         if let Some(last) = cache.get(&key) {
             if now.duration_since(*last) < self.window {
                 return ControlFlow::Drop;
             }
+            // Expired entry would have been removed above; if we reach here
+            // the key is stale in `order` — remove its old position before
+            // re-inserting at the back (keeps LRU order correct).
+            // This is O(N) on the VecDeque but rare (only when window elapsed
+            // and key repeats after expiry).
+            if let Some(pos) = order.iter().position(|k| k == &key) {
+                order.remove(pos);
+            }
         }
         // 3) Capacity (LRU): evict oldest if at capacity before insert.
-        if cache.len() >= self.max_entries {
-            // Find oldest entry by Instant (simple LRU approximation).
-            if let Some(oldest_key) = cache
-                .iter()
-                .min_by_key(|(_, t)| *t)
-                .map(|(k, _)| k.clone())
-            {
-                cache.remove(&oldest_key);
-            } else {
-                // Fallback: remove arbitrary entry if min search fails.
-                if let Some(k) = cache.keys().next().cloned() {
-                    cache.remove(&k);
-                }
-            }
-            // If still at capacity (should not happen), prune one more iteratively.
-            while cache.len() >= self.max_entries {
-                if let Some(k) = cache.keys().next().cloned() {
-                    cache.remove(&k);
-                } else {
+        // P6 fix: replace `cache.iter().min_by_key(|(_, t)| *t)` O(N) scan with
+        // O(1) amortized `VecDeque::pop_front` insertion-order eviction.
+        while cache.len() >= self.max_entries {
+            if let Some(oldest) = order.pop_front() {
+                if cache.remove(&oldest).is_some() {
                     break;
                 }
+                // Stale entry (already expired/removed) — continue to next.
+                continue;
             }
+            // Fallback: order empty but cache full (should not happen) — remove arbitrary.
+            if let Some(k) = cache.keys().next().cloned() {
+                cache.remove(&k);
+                // Also prune that key from order if present.
+                if let Some(pos) = order.iter().position(|x| x == &k) {
+                    order.remove(pos);
+                }
+            }
+            break;
         }
-        cache.insert(key, now);
+        cache.insert(key.clone(), now);
+        order.push_back(key);
         ControlFlow::Continue
     }
 
@@ -302,7 +330,10 @@ mod tests {
         assert_eq!(plugin.on_message(&mut m3), ControlFlow::Continue);
         // id-0 was evicted, so replay should now be treated as new.
         let mut replay_evicted = msg("id-0", "room");
-        assert_eq!(plugin.on_message(&mut replay_evicted), ControlFlow::Continue);
+        assert_eq!(
+            plugin.on_message(&mut replay_evicted),
+            ControlFlow::Continue
+        );
         // id-1 should still be deduped if not evicted (depends on min_by_key order;
         // at least one of id-1/id-2 must still be present). We assert size invariant:
         let cache = plugin.cache.lock().unwrap_or_else(|e| e.into_inner());

@@ -1,3 +1,4 @@
+// TODO(P1): extract to crates/provider-demo crate - see docs/POLISH.md P1
 //! Built-in `demo` provider: no network, echoes every send back as an inbound
 //! message and announces itself on `start()`. Used for local testing of the
 //! full stdio JSON-RPC flow without a real platform.
